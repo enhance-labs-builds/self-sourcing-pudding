@@ -31,6 +31,16 @@ Discovery looks for your phrases in local LinkedIn and X records. It also opens 
 
 Choose firsthand problem, explicit work, hold, or pass. To qualify someone, pick a current source attributed to that person, keep an exact excerpt, and record why it fits your brief. An unresolved identity, an old role check, or a lack of current evidence holds the candidate. Contact history is marked `unchecked`.
 
+## Start from a company URL
+
+In a browsing-enabled coding agent, open this repository and ask:
+
+> Use this public company URL as the seed for a sourcing run: `<company URL>`. Follow the link to its official site, read the product copy and public posts, and draft an editable brief for prospective users. Show the inferred customer profile, public search signals, and qualification criteria. Search LinkedIn and X with the rig under a US$0.10 cap. Shortlist people only when you can verify their current role and first-person evidence of the work.
+
+Start with the company's public LinkedIn page, X (Twitter) profile, or website. Use the official site to check that the profiles belong to the right company. Search the company name for customer examples, then search the problem language and alternatives for people outside the company's audience. Treat customer segments as hypotheses and use candidate evidence to decide who qualifies. The agent drafts the brief and reviews candidates. The CLI runs discovery and records evidence, spend, and decisions. Live discovery uses the Treg setup below.
+
+The [Boat brief](examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief.
+
 ## Try a capped live run
 
 The live adapter uses the [hosted Treg API](https://treg.to/docs) on macOS and Linux. Use a Treg team with prepaid balance and no connected provider keys or custom tools. The adapter checks this up front so charges go through Treg's metered route. Each tester supplies their own team slug and API token through `TREG_ORG` and `TREG_TOKEN`. Keep tokens out of the brief and repository.

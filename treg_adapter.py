@@ -17,11 +17,15 @@ from uuid import uuid4
 LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
 PROFILE = "harvestapi.linkedin.user.profile"
+COMPANY = "harvestapi.linkedin.company.profile"
 WEB = "bravesearch.web.search"
 WORK_EMAIL = "anyapi.linkedin.email.work.find"
 VERIFY_EMAIL = "hunter.people.email.verify"
-METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", WEB: "GET", WORK_EMAIL: "POST", VERIFY_EMAIL: "GET"}
-PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, WEB: 5_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000}
+EMAIL_ENDPOINTS = {COMPANY, WORK_EMAIL, VERIFY_EMAIL}
+METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WEB: "GET",
+           WORK_EMAIL: "POST", VERIFY_EMAIL: "GET"}
+PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WEB: 5_000,
+            WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000}
 
 
 def micro_dollars(value):
@@ -79,6 +83,9 @@ class Treg:
                 raise ValueError(f"Could not verify Treg team billing mode ({path}, HTTP {status}). Check TREG_TOKEN and TREG_ORG.")
             if rows:
                 raise ValueError("Use a Treg team with no connected provider keys or custom tools so every call is covered by Treg's spend cap.")
+        return self.endpoint_prices(endpoints)
+
+    def endpoint_prices(self, endpoints):
         quotes = {}
         for endpoint in sorted(endpoints):
             status, _, payload = self.request(f"/catalog/endpoints/{endpoint}", public=True)
@@ -188,12 +195,12 @@ def call_key(endpoint, params):
     return hashlib.sha256(json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()
 
 
-def bounded_call(client, path, state, endpoint, params, quote, transform):
+def bounded_call(client, path, state, endpoint, params, quote, transform, *, reserve=0):
     key = call_key(endpoint, params)
     calls = state["calls"]
     if key in calls:
         return calls[key].get("result")
-    remaining = state["plan"]["budget_micro"] - billing(state)
+    remaining = state["plan"]["budget_micro"] - billing(state) - reserve
     ceiling = min(PER_CALL[endpoint], remaining)
     if ceiling < quote:
         print(f"Skipped {endpoint}: the remaining budget is below its listed price.")
@@ -233,12 +240,17 @@ def bounded_call(client, path, state, endpoint, params, quote, transform):
     return call.get("result")
 
 
-def linkedin_profile(url):
+def linkedin_url(url, kind):
     parsed = urlsplit(url or "")
     if (parsed.scheme == "https" and parsed.hostname in {"linkedin.com", "www.linkedin.com"}
-            and parsed.username is None and re.fullmatch(r"/in/[\w%.-]+/?", parsed.path)):
+            and parsed.username is None and parsed.port in (None, 443)
+            and re.fullmatch(rf"/{kind}/[\w%.-]+/?", parsed.path)):
         return "https://www.linkedin.com" + parsed.path.rstrip("/").lower()
     return None
+
+
+def linkedin_profile(url):
+    return linkedin_url(url, "in")
 
 
 def linkedin_posts(data):
@@ -277,22 +289,27 @@ def profile_record(data, profile, today):
     row = data.get("element") or {}
     if linkedin_profile(row.get("linkedinUrl")) != profile:
         return None
-    roles = [
-        (role["position"], role["companyName"]) for role in row.get("currentPosition") or []
+    positions = [
+        role for role in row.get("currentPosition") or []
         if role.get("position") and role.get("companyName") and not (role.get("endDate") or {}).get("year")
     ]
-    roles = list(dict.fromkeys(roles))
+    roles = list(dict.fromkeys((role["position"], role["companyName"]) for role in positions))
     name = " ".join(filter(None, [row.get("firstName"), row.get("lastName")]))
     if not name or len(roles) != 1:
         return None
     role, company = roles[0]
-    return {
+    person = {
         "id": profile.rsplit("/", 1)[-1], "name": name, "role": role,
         "company": company, "profile_url": profile, "role_checked_on": today,
     }
+    company_urls = {linkedin_url(position.get("companyLinkedinUrl"), "company") for position in positions}
+    company_urls.discard(None)
+    if len(company_urls) == 1:
+        person["company_url"] = company_urls.pop()
+    return person
 
 
-def run_live(brief, args, match_terms, discovery_terms):
+def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     explicit_searches = "searches" in brief
     search_count = args.searches or (4 if explicit_searches else 2)
     searches = planned_searches(brief, search_count)
@@ -331,10 +348,22 @@ def run_live(brief, args, match_terms, discovery_terms):
         endpoints.add(PROFILE)
     if story_searches:
         endpoints.add(WEB)
+    if enrich:
+        plan["work_email"] = True
     quotes = client.preflight(endpoints)
     minimum = (quotes[LINKEDIN] * pages + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
     if budget < minimum:
         raise ValueError("The budget is below the listed cost of the planned searches. Reduce --searches or raise the cap.")
+    email_quotes = {}
+    email_reserve = 0
+    if enrich and budget - minimum >= sum(PER_CALL[endpoint] for endpoint in EMAIL_ENDPOINTS) + quotes.get(PROFILE, 0):
+        try:
+            email_quotes = client.endpoint_prices(EMAIL_ENDPOINTS)
+        except ValueError as error:
+            email_quotes = None
+            print(f"Work email is unavailable: {error}")
+        if email_quotes:
+            email_reserve = sum(PER_CALL[endpoint] for endpoint in EMAIL_ENDPOINTS)
     with journal(args.out, plan, org, args.resume) as (path, state):
         if "as_of" not in state:
             state["as_of"] = datetime.now(timezone.utc).date().isoformat()
@@ -391,7 +420,7 @@ def run_live(brief, args, match_terms, discovery_terms):
         people = {}
         for profile in profiles:
             person = bounded_call(client, path, state, PROFILE, {"url": profile}, quotes[PROFILE],
-                                  lambda data: profile_record(data, profile, today))
+                                  lambda data: profile_record(data, profile, today), reserve=email_reserve)
             if person:
                 people[profile] = person
         observations = []
@@ -406,6 +435,8 @@ def run_live(brief, args, match_terms, discovery_terms):
             observations.append(observation)
         corpus = {"schema_version": 1, "as_of": today, "people": list(people.values()), "observations": observations}
         atomic_json(args.out / "corpus.json", corpus)
+        if enrich:
+            enrich(corpus, client, path, state, email_quotes)
         billed = billing(state)
         print(f"Treg charged US${dollars(billed)} across {len(state['calls'])} calls. "
               f"Kept {len(observations)} posts and checked {len(people)} current roles.")

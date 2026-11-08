@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from treg_adapter import atomic_json, billing, linkedin_profile, run_live
+from treg_adapter import atomic_json, billing, linkedin_profile, linkedin_url, run_live
 from url_seed import discover_seed
 
 
@@ -36,20 +36,15 @@ def setup_commands(commands):
     run.add_argument("--results-per-search", type=int, choices=range(1, 51), metavar="1–50",
                      help="results to examine per page on both channels")
     run.add_argument("--batch", action="store_true", help="use the approved full batch target")
+    run.add_argument("--no-email", action="store_true", help="skip work email lookup and verification")
     run.add_argument("--resume", action="store_true")
     run.add_argument("--corpus", type=Path, help="preview previously collected records offline")
     run.add_argument("--identities", type=Path, help="reviewed links between social authors and LinkedIn profiles")
     review = steps.add_parser("review", help="record yay or nay and remember the reason")
     review.add_argument("--run", required=True)
     review.add_argument("--votes", type=Path, help="record decisions from a JSON file")
-    email = steps.add_parser("enrich", help="look up work email after a confirmed LinkedIn non-reply")
-    email.add_argument("--run", required=True)
-    email.add_argument("--events", type=Path, required=True)
-    email.add_argument("--budget-usd", required=True)
-    email.add_argument("--dry-run", action="store_true")
-    email.add_argument("--resume", action="store_true")
     steps.add_parser("status", help="show the approval and saved feedback")
-    for step in (start, approve, run, review, email, steps.choices["status"]):
+    for step in (start, approve, run, review, steps.choices["status"]):
         step.add_argument("--project", type=Path, required=True)
     return steps
 
@@ -214,6 +209,23 @@ def run_preview(args, state, rig):
     if out.exists() and (not args.resume or (out / "preview.json").exists() or args.corpus):
         raise ValueError("Choose a fresh run name. Resume is for interrupted live runs.")
     run_brief = {**brief, "limits": {**brief["limits"], "shortlist_size": limit}}
+    identities = rig.read_json(args.identities) if args.identities else None
+    prepared = None
+
+    def prepare(corpus):
+        if identities:
+            attach_identities(corpus, identities, rig)
+        queue = rig.build_queue(run_brief, corpus)
+        cards, held, seen = select_preview(queue, state["feedback"], limit, rig)
+        return {**queue, "candidates": cards, "brief_version": version}, held, seen
+
+    def enrich(corpus, client, path, ledger, quotes):
+        from work_email import enrich_candidates
+
+        nonlocal prepared
+        prepared = prepare(corpus)
+        enrich_candidates(prepared[0]["candidates"], client, path, ledger, quotes)
+
     if args.corpus:
         corpus = rig.read_json(args.corpus)
         stats = {"mode": "replay", "spend_usd": 0, "snapshot": corpus["as_of"]}
@@ -223,15 +235,16 @@ def run_preview(args, state, rig):
                             profiles=args.profiles if args.profiles is not None else limit,
                             out=out, resume=args.resume, dry_run=False, pages=args.pages,
                             results_per_search=args.results_per_search or (30 if args.batch else 12))
-        corpus = run_live(run_brief, options, rig.match_terms, rig.discovery_terms(run_brief))
+        corpus = run_live(run_brief, options, rig.match_terms, rig.discovery_terms(run_brief),
+                          enrich=None if args.no_email else enrich)
         ledger = rig.read_json(out / "treg-run.json")
         stats = {"mode": "live", "spend_usd": billing(ledger) / 1_000_000,
                  "channels": channel_status(ledger, treg_adapter)}
-    if args.identities:
-        attach_identities(corpus, rig.read_json(args.identities), rig)
-    queue = rig.build_queue(run_brief, corpus)
-    cards, held, seen = select_preview(queue, state["feedback"], limit, rig)
-    queue = {**queue, "candidates": cards, "brief_version": version}
+        pending = sum(call["reserved_micro"] for call in ledger["calls"].values() if call["status"] == "pending")
+        if pending:
+            stats["pending_spend_usd"] = pending / 1_000_000
+    queue, held, seen = prepared if prepared is not None else prepare(corpus)
+    cards = queue["candidates"]
     if args.corpus:
         rig.new_run(out, queue)
     else:
@@ -240,6 +253,9 @@ def run_preview(args, state, rig):
     stats.update({"run": args.run, "brief_version": version, "max_candidates": limit,
                   "candidates": len(cards), "held": len(held), "already_reviewed": seen,
                   "observations": len(corpus["observations"])})
+    if prepared is not None:
+        stats["verified_work_emails"] = sum(row["work_email"]["status"] == "verified" for row in cards)
+        print(f"Verified work email: {stats['verified_work_emails']}/{len(cards)} candidates.")
     atomic_json(out / "preview.json", stats)
     print(f"Preview: {len(cards)}/{limit} candidates with a current LinkedIn role and source, {len(held)} held. "
           f"Open {out / 'queue.json'} or run pilot review.")
@@ -262,6 +278,12 @@ def attach_identities(corpus, identities, rig):
             person = {field: identity[field] for field in ("name", "company", "role", "role_checked_on")}
             person.update(id="linkedin:" + url.rsplit("/", 1)[-1], profile_url=url)
             people[url] = person
+        if identity.get("company_url"):
+            company_url = linkedin_url(identity["company_url"], "company")
+            if (not company_url or person.get("company_url", company_url) != company_url
+                    or identity.get("company") != person["company"]):
+                raise ValueError("The supplied employer page must match the person's confirmed current employer.")
+            person["company_url"] = company_url
         if source.get("person_id") and source["person_id"] != person["id"]:
             raise ValueError("The source already belongs to a different verified identity.")
         source["person_id"] = person["id"]
@@ -276,6 +298,8 @@ def interactive_votes(queue):
         person = row["person"]
         print(f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
               else f"\n{row['sources'][0]['author']}")
+        if row.get("work_email", {}).get("status") == "verified":
+            print(f"Verified work email: {row['work_email']['address']}")
         sources = [source for source in row["sources"] if not source["hold"]]
         for i, source in enumerate(sources, 1):
             excerpt = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", source["text"][:650])
@@ -358,9 +382,5 @@ def execute(args, rig):
             print(f"Brief: {'approved' if approved else 'awaiting approval'}. Full batch target: {brief['limits']['batch_target']}.")
             print(f"Saved feedback: {sum(v['vote'] == 'yay' for v in votes)} yay, "
                   f"{sum(v['vote'] == 'nay' for v in votes)} nay. Automation: off.")
-        elif args.step == "enrich":
-            from work_email import enrich
-
-            enrich(args, state, rig, run_path(args.project, args.run))
         else:
             {"approve": approve, "run": run_preview, "review": review}[args.step](args, state, rig)

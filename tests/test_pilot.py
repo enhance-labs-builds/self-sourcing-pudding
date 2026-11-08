@@ -1,13 +1,14 @@
 from contextlib import redirect_stdout
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import rig
-from work_email import due, verified, work_address
+from treg_adapter import COMPANY, LINKEDIN, PROFILE, VERIFY_EMAIL, WORK_EMAIL, X
+from work_email import verified, work_address
 
 
 class PilotTest(TestCase):
@@ -61,15 +62,60 @@ class PilotTest(TestCase):
                 run("run", "--run", "edited", "--corpus", str(path))
             self.assertEqual(edited.exception.code, 2)
 
-    def test_email_requires_fresh_nonreply_and_exact_work_address(self):
-        now = datetime(2026, 11, 9, 9, tzinfo=timezone.utc)
-        event = {"status": "pending", "source_url": "https://example.com/event",
-                 "linkedin_sent_at": (now - timedelta(hours=78)).isoformat(),
-                 "status_checked_at": (now - timedelta(hours=1)).isoformat()}
-        self.assertTrue(due(event, now))
-        self.assertFalse(due({**event, "status": "replied"}, now))
-        self.assertFalse(due({**event, "linkedin_sent_at": (now - timedelta(hours=71)).isoformat()}, now))
-        self.assertFalse(due({**event, "status_checked_at": (now - timedelta(hours=25)).isoformat()}, now))
+    def test_live_pilot_enriches_before_review_under_the_same_cap(self):
+        now = datetime.now(timezone.utc)
+        profiles = [f"https://www.linkedin.com/in/sourcing-rig-fixture-{i}" for i in range(2)]
+        company = "https://www.linkedin.com/company/sourcing-rig-fixture"
+        address = "operator@example.com"
+        excerpt = "We built a preview deploy to test each change."
+        prices = {LINKEDIN: 2_000, X: 600, PROFILE: 6_400, COMPANY: 4_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 12_250}
+        responses = {
+            LINKEDIN: {"elements": [{"linkedinUrl": f"https://www.linkedin.com/posts/fixture-{i}",
+                                    "content": excerpt, "postedAt": {"date": now.isoformat()},
+                                    "author": {"name": "Example Operator", "linkedinUrl": url,
+                                               "info": "Platform Engineer"}} for i, url in enumerate(profiles)]},
+            X: {"output": {"data": {"items": []}}},
+            PROFILE: {"element": {"linkedinUrl": profiles[0], "firstName": "Example", "lastName": "Operator",
+                                  "currentPosition": [{"position": "Platform Engineer", "companyName": "Example Co",
+                                                       "companyLinkedinUrl": company}]}},
+            COMPANY: {"element": {"linkedinUrl": company, "name": "Example Co", "website": "https://example.com"}},
+            WORK_EMAIL: {"output": {"found": True, "data": {"linkedinUrl": profiles[0], "emails": [{"email": address}]}}},
+            VERIFY_EMAIL: {"data": {"email": address, "status": "valid", "accept_all": False, "webmail": False}},
+        }
+        client = Mock()
+        client.preflight.side_effect = client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
+
+        def request(path, method, params, headers):
+            endpoint = path.removeprefix("/call/")
+            self.assertGreaterEqual(float(headers["X-Treg-Route-Max-Cost"]), prices[endpoint] / 1_000_000)
+            return 200, {"x-treg-cost-micro": str(prices[endpoint])}, responses[endpoint]
+
+        client.request.side_effect = request
+        with TemporaryDirectory() as root, redirect_stdout(StringIO()), \
+                patch("url_seed.fetch_page", return_value=("https://example.com/", "<title>Example</title>")), \
+                patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "fixture"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            project = Path(root) / "pilot"
+            votes = Path(root) / "votes.json"
+
+            def run(*args):
+                rig.main(["pilot", *args, "--project", str(project)])
+
+            run("start", "example.com", "--starter", str(rig.EXAMPLE / "brief.toml"))
+            run("approve", "--yes")
+            run("run", "--run", "live", "--budget-usd", "0.042", "--searches", "1", "--profiles", "2")
+            out = project / "runs/live"
+            cards = rig.read_json(out / "queue.json")["candidates"]
+            self.assertEqual(len(cards), 1)
+            self.assertEqual(cards[0]["work_email"]["address"], address)
+            self.assertEqual(rig.read_json(out / "preview.json")["spend_usd"], 0.03625)
+            self.assertEqual([c.args[0].removeprefix("/call/") for c in client.request.call_args_list], list(prices))
+            rig.write_json(votes, {cards[0]["id"]: {"vote": "yay", "source_id": cards[0]["sources"][0]["id"],
+                                                    "excerpt": excerpt, "evidence_kind": "explicit_work"}})
+            run("review", "--run", "live", "--votes", str(votes))
+            self.assertEqual(rig.read_json(out / "shortlist.json")["leads"][0]["work_email"], address)
+
+    def test_email_requires_an_exact_work_address(self):
         profile = "https://www.linkedin.com/in/sourcing-rig-fixture"
         address = "operator@example.com"
         response = {"output": {"found": True, "data": {"linkedinUrl": profile, "emails": [

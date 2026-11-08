@@ -410,6 +410,12 @@ def apply_reviews(queue, decisions):
                             for item in row["sources"]
                         ],
                     })
+                    if "work_email" in row:
+                        email = row["work_email"]
+                        shortlist[-1]["work_email_status"] = email["status"]
+                        if email["status"] == "verified":
+                            shortlist[-1]["work_email"] = email["address"]
+                            shortlist[-1]["work_email_checked_on"] = email["checked_on"]
                     outcome = "shortlisted"
                 else:
                     outcome = "over_limit"
@@ -437,10 +443,13 @@ def write_results(run, queue, decisions):
         "decisions": decisions, "outcomes": results,
     })
     write_json(run / "shortlist.json", {"as_of": queue["as_of"], "leads": shortlist})
+    fields = CSV_FIELDS
+    if any("work_email" in candidate for candidate in queue["candidates"]):
+        fields += ("work_email", "work_email_status", "work_email_checked_on")
     with (run / "shortlist.csv").open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
+        writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
-        writer.writerows({key: csv_value(row[key]) for key in CSV_FIELDS} for row in shortlist)
+        writer.writerows({key: csv_value(row.get(key, "")) for key in fields} for row in shortlist)
     for row in results:
         print(f"{row['outcome']:>11}  {row['name']}: {row['reason']}")
     print(f"\n{len(shortlist)} shortlisted. See {run / 'shortlist.csv'} and {run / 'shortlist.json'}.")

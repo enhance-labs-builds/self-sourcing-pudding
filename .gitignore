@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+/.venv/
+/brief.toml
+/runs/
+.DS_Store

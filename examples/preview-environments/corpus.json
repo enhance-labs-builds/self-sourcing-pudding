@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-11-08",
+  "people": [
+    {
+      "id": "nia",
+      "name": "Nia Alder",
+      "role": "Platform Engineer",
+      "company": "Siltglass Studio",
+      "profile_url": "https://profiles.example/nia-alder",
+      "role_checked_on": "2026-11-06"
+    },
+    {
+      "id": "devon",
+      "name": "Devon Flint",
+      "role": "Developer Experience Engineer",
+      "company": "Mothsignal Software",
+      "profile_url": "https://profiles.example/devon-flint",
+      "role_checked_on": "2026-11-07"
+    },
+    {
+      "id": "jules",
+      "name": "Jules Reed",
+      "role": "Infrastructure Engineer",
+      "company": "Paperjet Systems",
+      "profile_url": "https://profiles.example/jules-reed",
+      "role_checked_on": "2026-11-07"
+    },
+    {
+      "id": "sam",
+      "name": "Sam Plover",
+      "role": "Platform Engineer",
+      "company": "Siltglass Studio",
+      "profile_url": "https://profiles.example/sam-plover",
+      "role_checked_on": "2026-11-06"
+    },
+    {
+      "id": "imani",
+      "name": "Imani Slate",
+      "role": "DevOps Engineer",
+      "company": "Threadfen",
+      "profile_url": "https://profiles.example/imani-slate",
+      "role_checked_on": "2026-11-04"
+    },
+    {
+      "id": "eli",
+      "name": "Eli Finch",
+      "role": "Infrastructure Engineer",
+      "company": "Driftglass Software",
+      "profile_url": "https://profiles.example/eli-finch",
+      "role_checked_on": "2026-06-02"
+    },
+    {
+      "id": "val",
+      "name": "Val Quill",
+      "role": "Product Marketing Lead",
+      "company": "BranchDock",
+      "profile_url": "https://profiles.example/val-quill",
+      "role_checked_on": "2026-11-06"
+    }
+  ],
+  "observations": [
+    {
+      "id": "nia-linkedin",
+      "channel": "linkedin",
+      "kind": "post",
+      "author": "Nia Alder",
+      "person_id": "nia",
+      "url": "https://linkedin.example/posts/nia-preview",
+      "published_on": "2026-11-02",
+      "text": "I maintain the preview deploy for our app team. Builds fail after a database reset, and I spent Friday restoring previews so the team could review changes."
+    },
+    {
+      "id": "nia-x",
+      "channel": "x",
+      "kind": "post",
+      "author": "@nia-builds",
+      "person_id": "nia",
+      "url": "https://x.example/nia-builds/status/101",
+      "published_on": "2026-11-04",
+      "text": "Our preview build now checks the fixture database before creating an environment. Fewer mystery failures in review this week."
+    },
+    {
+      "id": "jules-comment",
+      "channel": "linkedin",
+      "kind": "comment",
+      "author": "Jules Reed",
+      "person_id": "jules",
+      "parent_id": "nia-linkedin",
+      "url": "https://linkedin.example/posts/nia-preview/comments/4",
+      "published_on": "2026-11-03",
+      "text": "Following this. Thanks for sharing!"
+    },
+    {
+      "id": "sam-comment",
+      "channel": "linkedin",
+      "kind": "comment",
+      "author": "Sam Plover",
+      "person_id": "sam",
+      "parent_id": "nia-linkedin",
+      "url": "https://linkedin.example/posts/nia-preview/comments/5",
+      "published_on": "2026-11-03",
+      "text": "I saw this come up in our platform sync. I'll ask who owns it now."
+    },
+    {
+      "id": "val-launch",
+      "channel": "x",
+      "kind": "post",
+      "author": "@val-quill",
+      "person_id": "val",
+      "url": "https://x.example/val-quill/status/201",
+      "published_on": "2026-11-05",
+      "text": "BranchDock now supports shared staging. Try it in your team's next release."
+    },
+    {
+      "id": "devon-quote",
+      "channel": "x",
+      "kind": "quote",
+      "author": "@devon-infra",
+      "person_id": "devon",
+      "parent_id": "val-launch",
+      "url": "https://x.example/devon-infra/status/202",
+      "published_on": "2026-11-06",
+      "text": "I built a deploy script for our frontend team that spins up a fresh database and URL for every pull request. I own the service and we're moving the rest of the apps onto it this month."
+    },
+    {
+      "id": "unbound-x",
+      "channel": "x",
+      "kind": "reply",
+      "author": "@relay-sprocket",
+      "parent_id": "val-launch",
+      "url": "https://x.example/relay-sprocket/status/203",
+      "published_on": "2026-11-07",
+      "text": "Our preview environments take twenty minutes to come up. I'm trying a smaller base image."
+    },
+    {
+      "id": "imani-old-source",
+      "channel": "linkedin",
+      "kind": "post",
+      "author": "Imani Slate",
+      "person_id": "imani",
+      "url": "https://linkedin.example/posts/imani-staging",
+      "published_on": "2026-09-16",
+      "text": "I look after preview environments for our team. We had to rebuild the base image every time a new backend service shipped."
+    },
+    {
+      "id": "eli-old-role",
+      "channel": "x",
+      "kind": "post",
+      "author": "@eli-finch",
+      "person_id": "eli",
+      "url": "https://x.example/eli-finch/status/301",
+      "published_on": "2026-11-06",
+      "text": "I was paged again after a preview build hit the shared staging database. I'm separating the credentials."
+    }
+  ]
+}

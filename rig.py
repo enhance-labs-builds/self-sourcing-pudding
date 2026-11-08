@@ -97,6 +97,8 @@ def read_brief(path):
         value = limits.get(key)
         if type(value) is not int or value < 1:
             raise ValueError(f"limits.{key} must be a positive whole number.")
+    if "batch_target" in limits and (type(limits["batch_target"]) is not int or not 1 <= limits["batch_target"] <= 500):
+        raise ValueError("Set limits.batch_target to a whole number between 1 and 500.")
     return brief
 
 
@@ -403,6 +405,7 @@ def apply_reviews(queue, decisions):
                             {
                                 "channel": item["channel"], "url": item["url"],
                                 **({"found_by": item["found_by"]} if item.get("found_by") else {}),
+                                **{field: item[field] for field in ("binding_source", "role_source") if item.get(field)},
                             }
                             for item in row["sources"]
                         ],
@@ -452,6 +455,8 @@ def new_run(path, queue):
 
 
 def main(argv=None):
+    import pilot
+
     cli = argparse.ArgumentParser(description=__doc__)
     commands = cli.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="run the fictional example end to end")
@@ -479,10 +484,13 @@ def main(argv=None):
     review = commands.add_parser("review", help="review a queue and export a shortlist")
     review.add_argument("--run", type=Path, required=True)
     review.add_argument("--decisions", type=Path, help="replay a review.json from the same queue")
+    pilot.setup_commands(commands)
     args = cli.parse_args(argv)
 
     try:
-        if args.command == "init":
+        if args.command == "pilot":
+            pilot.execute(args, sys.modules[__name__])
+        elif args.command == "init":
             init_brief(args.brief, args.example)
         elif args.command == "plan":
             show_plan(read_brief(args.brief))

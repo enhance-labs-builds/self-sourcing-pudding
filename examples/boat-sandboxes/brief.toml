@@ -17,16 +17,27 @@ lane = "problem"
 phrase = "agent sandbox"
 
 [[searches]]
+lane = "problem"
+phrase = "sandbox infrastructure"
+
+[[searches]]
+lane = "alternative"
+phrase = "E2B"
+workflow = ["sandbox", "coding agent", "code execution"]
+
+[[searches]]
+lane = "alternative"
+phrase = "Daytona"
+workflow = ["sandbox", "coding agent", "code execution"]
+exclude_phrases = ["Daytona 500", "Daytona Beach"]
+
+[[searches]]
+lane = "problem"
+phrase = "persistent sandbox"
+
+[[searches]]
 lane = "brand"
 phrase = "boat.dev"
-
-[[searches]]
-lane = "alternative"
-phrase = "E2B sandbox"
-
-[[searches]]
-lane = "alternative"
-phrase = "Daytona sandbox"
 
 [limits]
 source_age_days = 45

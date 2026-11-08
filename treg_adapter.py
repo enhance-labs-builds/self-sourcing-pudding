@@ -3,7 +3,6 @@
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-import fcntl
 import hashlib
 import json
 import os
@@ -19,8 +18,10 @@ LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
 PROFILE = "harvestapi.linkedin.user.profile"
 WEB = "bravesearch.web.search"
-METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", WEB: "GET"}
-PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, WEB: 5_000}
+WORK_EMAIL = "anyapi.linkedin.email.work.find"
+VERIFY_EMAIL = "hunter.people.email.verify"
+METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", WEB: "GET", WORK_EMAIL: "POST", VERIFY_EMAIL: "GET"}
+PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, WEB: 5_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000}
 
 
 def micro_dollars(value):
@@ -85,8 +86,9 @@ class Treg:
                 raise ValueError(f"Could not check the current catalog entry for {endpoint}.")
             row = payload.get("endpoint", {})
             price = row.get("cost", {})
+            currencies = {"USD", "credit"} if endpoint == VERIFY_EMAIL else {"USD"}
             if (row.get("method") != METHODS[endpoint] or row.get("platform_eligible") is not True
-                    or row.get("platform_blocked") or price.get("currency") != "USD"
+                    or row.get("platform_blocked") or price.get("currency") not in currencies
                     or price.get("unit") != "call" or price.get("type") not in {"per_call", "per_success"}):
                 raise ValueError(f"{endpoint} no longer has a supported Treg platform price or request contract.")
             quotes[endpoint] = micro_dollars(price["usd"])
@@ -114,6 +116,8 @@ def atomic_json(path, data):
 
 @contextmanager
 def journal(out, plan, org, resume):
+    import fcntl
+
     if not resume:
         out.mkdir(parents=True, mode=0o700)
         (out / ".gitignore").write_text("*\n", encoding="utf-8")
@@ -180,8 +184,12 @@ def billing(state):
     return sum(call.get("cost_micro", 0) for call in calls)
 
 
+def call_key(endpoint, params):
+    return hashlib.sha256(json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()
+
+
 def bounded_call(client, path, state, endpoint, params, quote, transform):
-    key = hashlib.sha256(json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()
+    key = call_key(endpoint, params)
     calls = state["calls"]
     if key in calls:
         return calls[key].get("result")
@@ -288,10 +296,12 @@ def run_live(brief, args, match_terms, discovery_terms):
     explicit_searches = "searches" in brief
     search_count = args.searches or (4 if explicit_searches else 2)
     searches = planned_searches(brief, search_count)
+    pages = getattr(args, "pages", 1)
+    per_search = getattr(args, "results_per_search", 12)
     terms = [search["phrase"] for search in searches]
     story_searches = brief.get("customer_stories", [])
     budget = micro_dollars(args.budget_usd)
-    print(f"Treg run ceiling: US${dollars(budget)}. Up to {len(terms) * 2} social searches, "
+    print(f"Treg run ceiling: US${dollars(budget)}. Up to {len(terms) * (pages + 1)} social searches, "
           f"{len(story_searches)} customer story searches, and {args.profiles} role lookups.", flush=True)
     for search in searches:
         lane = search["lane"]
@@ -312,13 +322,17 @@ def run_live(brief, args, match_terms, discovery_terms):
         raise ValueError("Set TREG_TOKEN and TREG_ORG for your Treg team.")
     client = Treg(token, org)
     plan = {"brief": brief, "terms": terms, "profiles": args.profiles, "budget_micro": budget}
+    if pages != 1:
+        plan["linkedin_pages"] = pages
+    if per_search != 12:
+        plan["results_per_search"] = per_search
     endpoints = {LINKEDIN, X}
     if args.profiles:
         endpoints.add(PROFILE)
     if story_searches:
         endpoints.add(WEB)
     quotes = client.preflight(endpoints)
-    minimum = (quotes[LINKEDIN] + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
+    minimum = (quotes[LINKEDIN] * pages + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
     if budget < minimum:
         raise ValueError("The budget is below the listed cost of the planned searches. Reduce --searches or raise the cap.")
     with journal(args.out, plan, org, args.resume) as (path, state):
@@ -333,12 +347,13 @@ def run_live(brief, args, match_terms, discovery_terms):
             linkedin, x = social_queries(search)
             linkedin_sort = "date" if search.get("workflow") else "relevance"
             keep_terms = [term] if explicit_searches else discovery_terms
-            for endpoint, payload, transform in (
-                (LINKEDIN, {"search": linkedin, "sortBy": linkedin_sort, "page": 1}, linkedin_posts),
-                (X, {"query": f"{x} since:{since}", "queryType": "Latest", "limit": 12}, x_posts),
-            ):
+            requests = [(LINKEDIN, {"search": linkedin, "sortBy": linkedin_sort, "page": 1}, linkedin_posts),
+                        (X, {"query": f"{x} since:{since}", "queryType": "Latest", "limit": per_search}, x_posts)]
+            requests.extend((LINKEDIN, {"search": linkedin, "sortBy": linkedin_sort, "page": page}, linkedin_posts)
+                            for page in range(2, pages + 1))
+            for endpoint, payload, transform in requests:
                 result = bounded_call(client, path, state, endpoint, payload, quotes[endpoint], transform)
-                for post in (result or [])[:12]:
+                for post in (result or [])[:per_search]:
                     body = post["text"]
                     if not match_terms(body, keep_terms) or match_terms(body, search.get("exclude_phrases", [])):
                         continue

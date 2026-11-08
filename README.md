@@ -33,6 +33,26 @@ Choose firsthand problem, explicit work, hold, or pass. To qualify someone, pick
 
 ## Start from a company URL
 
+The pilot commands keep an editable brief and feedback in one local project.
+
+```sh
+python3 rig.py pilot start boat.dev --project runs/boat
+python3 rig.py pilot approve --project runs/boat
+python3 rig.py pilot run --project runs/boat --run preview --budget-usd 0.10
+python3 rig.py pilot review --project runs/boat --run preview
+python3 rig.py pilot status --project runs/boat
+```
+
+`start` reads the site's public copy, social links and comparison links. It proposes roles and search phrases when the copy supports a starting hypothesis. For other sites, fill in the buyer and workflow in `brief.toml`. Use `--starter` to import a researched brief, or `--website` when your starting LinkedIn or X URL needs a public company site. Review or edit the draft before approval. Any later edit to the brief's settings needs a new approval.
+
+The preview shows up to 20 people with a current LinkedIn role and dated source. `holds.json` contains candidates with an identity or freshness gap. To include an X author in the preview, supply a reviewed identity match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
+
+Review saves yay/nay with evidence or a reason. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. `pilot run --batch` uses `limits.batch_target` from the approved brief, starting at 100. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The approved target and spend cap bound the run. The pilot is run on demand.
+
+For optional work email, run `pilot enrich --project runs/boat --run preview --events events.json --budget-usd 0.05 --dry-run`. The JSON array contains one recorded event per `profile_url`, with `company`, `company_website`, `linkedin_sent_at`, `status_checked_at`, `status`, and `source_url` for the status evidence. Use ISO timestamps with offsets. Only an approved lead with a fresh `pending` or `no_reply` status at least 72 hours after a real LinkedIn send qualifies. Remove `--dry-run` to look for one exact work address on the documented employer domain and independently verify it. Keep the results in the private run folder.
+
+### Draft a brief with a browsing-enabled agent
+
 In a browsing-enabled coding agent, open this repository and ask:
 
 > Use this public company URL as the seed for a sourcing run: `<company URL>`. Follow the link to its official site, read the product copy and public posts, and draft an editable brief for prospective users. Show the inferred customer profile, public search signals, and qualification criteria. Search LinkedIn and X with the rig under a US$0.10 cap. Shortlist people only when you can verify their current role and first-person evidence of the work.

@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 /.venv/
+/.pudding/
 /brief.toml
 /runs/
 .DS_Store

@@ -66,7 +66,7 @@ class Page(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        if tag in {"title", "h1"}:
+        if tag in {"title", "h1", "h2", "h3"}:
             self.field = tag
         if tag == "meta" and attrs.get("content"):
             key = attrs.get("property") or attrs.get("name")
@@ -118,5 +118,6 @@ def discover_seed(value, website=None, html=None):
             comparison = re.fullmatch(r"/compare/[a-z0-9-]+-vs-([a-z0-9-]+)/?", part.path)
             if comparison and len(comparisons) < 8:
                 comparisons[comparison[1].replace("-", " ")] = url
-    return {"input": seed, "website": final_url, "title": title, "description": description,
+    headings = " ".join(page.fields.get(tag, "") for tag in ("h1", "h2", "h3")).strip()
+    return {"input": seed, "website": final_url, "title": title, "description": description, "headings": headings,
             "linked_profiles": links, "comparisons": comparisons}

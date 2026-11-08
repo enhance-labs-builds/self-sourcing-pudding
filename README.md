@@ -4,6 +4,17 @@ Describe a problem, find people who talk about the work, and produce a shortlist
 
 Self-Sourcing Pudding runs with Python 3.11 or newer. The offline example uses fictional people, companies, posts, and profile links. An optional live adapter can build a review queue from public posts.
 
+## Walk through a first run
+
+On macOS or Linux, run `bash install.sh` from an extracted checkout. In the downloadable demo, use `bash "Start Pudding.command"` from the extracted folder. The launcher installs the `pudding` command inside that folder and opens the walkthrough. Paste a company URL, approve or edit the brief, then review the candidates. The example reads the public company website for the brief and uses fictional posts, profiles and work emails. It spends US$0.
+
+```sh
+.pudding/bin/pudding walk
+.pudding/bin/pudding walk --live --budget-usd 0.50
+```
+
+The second command uses the Treg setup below for real candidates. Each walkthrough saves its brief, candidate review and shortlist in its project folder. Run `walk --project PATH` with the same live or example options to return to a walkthrough.
+
 ## Try it in one command
 
 ```sh

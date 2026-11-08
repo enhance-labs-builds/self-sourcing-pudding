@@ -413,7 +413,7 @@ def apply_reviews(queue, decisions):
                     if "work_email" in row:
                         email = row["work_email"]
                         shortlist[-1]["work_email_status"] = email["status"]
-                        if email["status"] == "verified":
+                        if email["status"] in {"verified", "example"}:
                             shortlist[-1]["work_email"] = email["address"]
                             shortlist[-1]["work_email_checked_on"] = email["checked_on"]
                     outcome = "shortlisted"
@@ -442,7 +442,10 @@ def write_results(run, queue, decisions):
         "as_of": queue["as_of"], "queue_sha256": queue_digest(queue),
         "decisions": decisions, "outcomes": results,
     })
-    write_json(run / "shortlist.json", {"as_of": queue["as_of"], "leads": shortlist})
+    result = {"as_of": queue["as_of"], "leads": shortlist}
+    if queue.get("mode") == "example":
+        result["mode"] = "example"
+    write_json(run / "shortlist.json", result)
     fields = CSV_FIELDS
     if any("work_email" in candidate for candidate in queue["candidates"]):
         fields += ("work_email", "work_email_status", "work_email_checked_on")
@@ -465,6 +468,7 @@ def new_run(path, queue):
 
 def main(argv=None):
     import pilot
+    import walkthrough
 
     cli = argparse.ArgumentParser(description=__doc__)
     commands = cli.add_subparsers(dest="command", required=True)
@@ -494,10 +498,13 @@ def main(argv=None):
     review.add_argument("--run", type=Path, required=True)
     review.add_argument("--decisions", type=Path, help="replay a review.json from the same queue")
     pilot.setup_commands(commands)
+    walkthrough.setup_command(commands)
     args = cli.parse_args(argv)
 
     try:
-        if args.command == "pilot":
+        if args.command == "walk":
+            walkthrough.run(args, sys.modules[__name__])
+        elif args.command == "pilot":
             pilot.execute(args, sys.modules[__name__])
         elif args.command == "init":
             init_brief(args.brief, args.example)

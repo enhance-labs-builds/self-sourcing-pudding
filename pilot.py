@@ -64,28 +64,38 @@ def draft(seed, target):
         "more_like": "A practitioner describes their team's work and a concrete constraint.",
         "less_like": "Someone repeats a product announcement without describing their own work.",
     }
-    text = f"{seed['title']} {description}".lower()
+    text = f"{seed['title']} {description} {seed.get('headings', '')}".lower()
+    workflow = []
     if "agent" in text and ("sandbox" in text or re.search(r"\bvms?\b", text)):
         data["problem"] = "Teams running AI agents need isolated execution with the tooling and persistence their workloads require."
         data["target_roles"] = ["Platform Engineer", "Infrastructure Engineer", "Engineering Lead", "CTO", "Founder"]
         data["signals"] = ["agent sandbox", "sandbox infrastructure", "persistent sandbox", "AI agents"]
+        workflow = ["sandbox", "coding agent", "code execution"]
+    elif ("onboarding" in text or "implementation" in text) and ("customer" in text or "user" in text):
+        data["problem"] = "Customer teams need to guide new users through setup and adoption without a live call for every account."
+        data["target_roles"] = ["Head of Customer Success", "Customer Onboarding Lead", "Implementation Manager", "Product Growth Lead"]
+        data["signals"] = ["customer onboarding", "guided onboarding", "onboarding calls", "time to value"]
+        data["qualifies"] = "The person owns customer onboarding or adoption and describes a bottleneck, an experiment, or a rollout their team is working on."
+        workflow = ["customer onboarding", "activation", "guided setup"]
     lines = ["# Roles, problem and search terms are hypotheses. Edit them before approval.",
              *[f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in data.items()]]
-    if data["signals"] != [host]:
-        lines.extend(("", "[[searches]]", 'lane = "problem"', f'phrase = "{data["signals"][0]}"'))
+    if workflow:
+        for term in data["signals"][:2]:
+            lines.extend(("", "[[searches]]", 'lane = "problem"', f'phrase = "{term}"'))
         for competitor in data["alternatives"][:3]:
             lines.extend(("", "[[searches]]", 'lane = "alternative"', f'phrase = "{competitor}"',
-                          'workflow = ["sandbox", "coding agent", "code execution"]',
+                          f"workflow = {json.dumps(workflow)}",
                           f'seed_url = "{seed["comparisons"][competitor]}"'))
     lines.extend(("", "[limits]", "source_age_days = 45", "role_age_days = 30",
                   "shortlist_size = 20", f"batch_target = {target}"))
     return "\n".join(lines) + "\n"
 
 
-def start_project(args, rig):
+def start_project(args, rig, *, seed=None, show=True):
     if not 1 <= args.target <= 500:
         raise ValueError("Set a full batch target between 1 and 500.")
-    seed = discover_seed(args.url, args.website)
+    if seed is None:
+        seed = discover_seed(args.url, args.website)
     if args.starter:
         starter = rig.read_brief(args.starter)
         body = args.starter.read_text(encoding="utf-8")
@@ -103,8 +113,9 @@ def start_project(args, rig):
     print(f"Company: {seed['title']}\nWebsite: {seed['website']}\n{seed['description']}")
     for channel in ("linkedin", "x"):
         print(f"{channel}: {seed['linked_profiles'].get(channel, 'no company link found on the site')}")
-    rig.show_plan(rig.read_brief(args.project / "brief.toml"))
-    print(f"Review or edit {args.project / 'brief.toml'}, then run pilot approve.")
+    if show:
+        rig.show_plan(rig.read_brief(args.project / "brief.toml"))
+        print(f"Review or edit {args.project / 'brief.toml'}, then run pilot approve.")
 
 
 @contextmanager
@@ -125,18 +136,19 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def approve(args, state, rig):
+def approve(args, state, rig, *, show=True):
     brief = rig.read_brief(args.project / "brief.toml")
     if "Choose who owns this workflow" in brief["target_roles"] or brief["problem"].startswith("Describe the workflow someone would use "):
         raise ValueError("Fill in the workflow and target roles in brief.toml before approving.")
-    rig.show_plan({**brief, "limits": {**brief["limits"], "shortlist_size": 20}})
-    print(f"Review preview: up to 20 people. Full batch target: {brief['limits']['batch_target']}.")
+    if show:
+        rig.show_plan({**brief, "limits": {**brief["limits"], "shortlist_size": 20}})
+        print(f"Review preview: up to 20 people. Full batch target: {brief['limits']['batch_target']}.")
     if not args.yes and input("Approve this version? [y/N] ").strip().lower() not in {"y", "yes"}:
         print("Edit brief.toml and approve when it is ready.")
         return
     state["approval"] = {"version": brief_version(brief), "approved_at": utc_now()}
     atomic_json(args.project / "state.json", state)
-    print("Approved. Use pilot run to start a capped preview.")
+    print("Approved. Use pilot run to start a capped preview." if show else "Brief approved.")
 
 
 def run_path(project, name):
@@ -155,7 +167,7 @@ def feedback_key(row):
     return "source:" + source["url"]
 
 
-def select_preview(queue, feedback, limit, rig):
+def select_preview(queue, feedback, limit, rig, *, example=False):
     known = []
     held = []
     seen = 0
@@ -172,7 +184,7 @@ def select_preview(queue, feedback, limit, rig):
             continue
         if history:
             row = {**row, "previous_feedback": history["vote"]}
-        if person and not linkedin_profile(person["profile_url"]):
+        if person and not example and not linkedin_profile(person["profile_url"]):
             row = {**row, "hold": "The author has no verified LinkedIn profile."}
         (held if rig.candidate_hold(row) else known).append(row)
     # Keep the person with attributable, current evidence ahead of a name needing research.
@@ -197,7 +209,7 @@ def channel_status(ledger, adapter):
     return coverage
 
 
-def run_preview(args, state, rig):
+def run_preview(args, state, rig, *, example=None):
     import treg_adapter
 
     brief = rig.read_brief(args.project / "brief.toml")
@@ -216,7 +228,7 @@ def run_preview(args, state, rig):
         if identities:
             attach_identities(corpus, identities, rig)
         queue = rig.build_queue(run_brief, corpus)
-        cards, held, seen = select_preview(queue, state["feedback"], limit, rig)
+        cards, held, seen = select_preview(queue, state["feedback"], limit, rig, example=example is not None)
         return {**queue, "candidates": cards, "brief_version": version}, held, seen
 
     def enrich(corpus, client, path, ledger, quotes):
@@ -226,7 +238,10 @@ def run_preview(args, state, rig):
         prepared = prepare(corpus)
         enrich_candidates(prepared[0]["candidates"], client, path, ledger, quotes)
 
-    if args.corpus:
+    if example is not None:
+        corpus = example
+        stats = {"mode": "example", "spend_usd": 0, "snapshot": corpus["as_of"]}
+    elif args.corpus:
         corpus = rig.read_json(args.corpus)
         stats = {"mode": "replay", "spend_usd": 0, "snapshot": corpus["as_of"]}
     else:
@@ -245,7 +260,13 @@ def run_preview(args, state, rig):
             stats["pending_spend_usd"] = pending / 1_000_000
     queue, held, seen = prepared if prepared is not None else prepare(corpus)
     cards = queue["candidates"]
-    if args.corpus:
+    if example is not None:
+        queue["mode"] = "example"
+        for row in cards:
+            email = row["person"].get("example_email")
+            row["work_email"] = ({"status": "example", "address": email, "checked_on": queue["as_of"]}
+                                 if email else {"status": "no_example_address"})
+    if args.corpus or example is not None:
         rig.new_run(out, queue)
     else:
         atomic_json(out / "queue.json", queue)
@@ -257,8 +278,11 @@ def run_preview(args, state, rig):
         stats["verified_work_emails"] = sum(row["work_email"]["status"] == "verified" for row in cards)
         print(f"Verified work email: {stats['verified_work_emails']}/{len(cards)} candidates.")
     atomic_json(out / "preview.json", stats)
-    print(f"Preview: {len(cards)}/{limit} candidates with a current LinkedIn role and source, {len(held)} held. "
-          f"Open {out / 'queue.json'} or run pilot review.")
+    if example is not None:
+        print(f"Example preview: {len(cards)} fictional candidates, {len(held)} held. Spend: US$0.")
+    else:
+        print(f"Preview: {len(cards)}/{limit} candidates with a current LinkedIn role and source, {len(held)} held. "
+              f"Open {out / 'queue.json'} or run pilot review.")
 
 
 def attach_identities(corpus, identities, rig):
@@ -294,12 +318,16 @@ def attach_identities(corpus, identities, rig):
 
 def interactive_votes(queue):
     votes = {}
+    if queue.get("mode") == "example":
+        print("\nExample candidates. Profiles, posts and work emails below are fictional.")
     for row in queue["candidates"]:
         person = row["person"]
         print(f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
               else f"\n{row['sources'][0]['author']}")
         if row.get("work_email", {}).get("status") == "verified":
             print(f"Verified work email: {row['work_email']['address']}")
+        elif row.get("work_email", {}).get("status") == "example":
+            print(f"Example work email: {row['work_email']['address']}")
         sources = [source for source in row["sources"] if not source["hold"]]
         for i, source in enumerate(sources, 1):
             excerpt = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", source["text"][:650])

@@ -1,12 +1,50 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from treg_adapter import PROFILE, Treg, bounded_call, journal
+from rig import discovery_terms, match_terms
+from treg_adapter import LINKEDIN, PROFILE, X, Treg, bounded_call, journal, run_live
 
 
 class TregSpendTest(TestCase):
+    def test_explicit_queries_run_on_both_channels_and_preserve_why_a_post_was_found(self):
+        brief = {
+            "signals": ["agent sandbox"], "alternatives": ["Daytona"],
+            "searches": [
+                {"lane": "problem", "phrase": "agent sandbox"},
+                {"lane": "brand", "phrase": "boat.dev"},
+                {"lane": "alternative", "phrase": "Daytona sandbox"},
+            ],
+            "limits": {"source_age_days": 30},
+        }
+        client = Mock()
+        client.preflight.return_value = {LINKEDIN: 2_000, X: 600}
+        client.request.side_effect = lambda path, *_: (200, {"x-treg-cost-micro": "0"}, {
+            "elements": [
+                {"linkedinUrl": "https://www.linkedin.com/posts/work", "content": "Our agent sandbox uses boat.dev."},
+                {"linkedinUrl": "https://www.linkedin.com/posts/racing", "content": "Daytona racing this weekend."},
+            ],
+        } if path.endswith(LINKEDIN) else {
+            "output": {"data": {"items": [
+                {"authorUsername": "builder", "id": "123", "text": "We use Daytona sandbox for builds."},
+            ]}},
+        })
+        with TemporaryDirectory() as root, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            args = SimpleNamespace(searches=None, budget_usd="0.10", profiles=0, dry_run=False,
+                                   out=Path(root) / "run", resume=False)
+            corpus = run_live(brief, args, match_terms, discovery_terms(brief))
+
+        self.assertEqual([call.args[2]["search"] for call in client.request.call_args_list[::2]],
+                         ["agent sandbox", "boat.dev", "Daytona sandbox"])
+        self.assertEqual([call.args[2]["query"].split(" since:")[0] for call in client.request.call_args_list[1::2]],
+                         ['"agent sandbox"', '"boat.dev"', '"Daytona sandbox"'])
+        by_channel = {post["channel"]: post["found_by"] for post in corpus["observations"]}
+        self.assertEqual(len(corpus["observations"]), 2)
+        self.assertEqual(by_channel, {"linkedin": brief["searches"][:2], "x": brief["searches"][2:]})
+
     def test_preflight_refuses_a_team_with_provider_keys(self):
         client = Treg("test-token", "demo-team")
         client.request = Mock(return_value=(200, {}, [{"name": "connected provider"}]))

@@ -132,8 +132,10 @@ def journal(out, plan, org, resume):
 
 
 def planned_searches(brief, count):
+    if "searches" in brief:
+        return [(search["lane"], search["phrase"]) for search in brief["searches"][:count]]
     terms = list(dict.fromkeys(brief["signals"][:1] + brief["alternatives"] + brief["signals"]))
-    return terms[:count]
+    return [("problem" if term in brief["signals"] else "alternative", term) for term in terms[:count]]
 
 
 def billing(state):
@@ -245,12 +247,15 @@ def profile_record(data, profile, today):
     }
 
 
-def run_live(brief, args, match_terms):
-    terms = planned_searches(brief, args.searches)
+def run_live(brief, args, match_terms, discovery_terms):
+    explicit_searches = "searches" in brief
+    search_count = args.searches or (4 if explicit_searches else 2)
+    searches = planned_searches(brief, search_count)
+    terms = [phrase for _, phrase in searches]
     budget = micro_dollars(args.budget_usd)
     print(f"Treg run ceiling: US${dollars(budget)}. At most {len(terms) * 2} searches and {args.profiles} role lookups.", flush=True)
-    for term in terms:
-        print(f"  LinkedIn and X: {term}", flush=True)
+    for lane, phrase in searches:
+        print(f"  LinkedIn and X [{lane}]: {phrase}", flush=True)
     if args.dry_run:
         return None
 
@@ -269,15 +274,21 @@ def run_live(brief, args, match_terms):
         today = state["as_of"]
         since = (datetime.fromisoformat(today) - timedelta(days=brief["limits"]["source_age_days"])).date()
         posts = {}
-        for term in terms:
+        for lane, term in searches:
+            keep_terms = [term] if explicit_searches else discovery_terms
             for endpoint, payload, transform in (
                 (LINKEDIN, {"search": term, "sortBy": "relevance", "page": 1}, linkedin_posts),
                 (X, {"query": f'"{term.replace(chr(34), "")}" since:{since}', "queryType": "Latest", "limit": 12}, x_posts),
             ):
                 result = bounded_call(client, path, state, endpoint, payload, quotes[endpoint], transform)
                 for post in (result or [])[:12]:
-                    if match_terms(post["text"], brief["signals"] + brief["alternatives"]):
-                        posts.setdefault(post["url"], post)
+                    if match_terms(post["text"], keep_terms):
+                        observed = posts.setdefault(post["url"], dict(post))
+                        if explicit_searches:
+                            found_by = observed.setdefault("found_by", [])
+                            query = {"lane": lane, "phrase": term}
+                            if query not in found_by:
+                                found_by.append(query)
         ranked = sorted(
             (post for post in posts.values() if post["profile"] and str(since) <= (post["published_on"] or "") <= today),
             key=lambda post: (bool(match_terms(post["headline"], brief["target_roles"])),

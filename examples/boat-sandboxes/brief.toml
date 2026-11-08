@@ -6,11 +6,27 @@ product = "Boat provides persistent cloud Ubuntu VMs for agents, with Docker, br
 problem = "Teams running agents for customers need isolated environments for code or browser tasks. They may need to preserve state, fork environments, run full tooling, or keep costs under control as the fleet grows."
 target_roles = ["Founder", "CTO", "Platform Engineer", "Infrastructure Engineer", "Software Engineer", "Engineering Lead", "Developer"]
 signals = ["agent sandbox", "agent sandboxes", "sandbox isolation", "coding agents", "persistent sandbox", "sandbox infrastructure", "browser agents", "software factory", "microVM", "cloud devbox", "cloud machine", "E2B computer use"]
-alternatives = ["boat.dev", "E2B sandbox", "Daytona sandbox", "Vercel Sandbox", "Modal Sandboxes", "Firecracker", "Docker-in-Docker"]
+alternatives = ["E2B", "Daytona", "Vercel Sandbox", "Modal Sandboxes", "Firecracker", "Docker-in-Docker"]
 exclusions = ["Boat employees and confirmed Boat customers", "sandbox vendors promoting their own service", "unrelated uses of sandbox", "benchmark commentary or likes with no first-person use", "one-off local experiments with no hosted or repeat workload"]
 qualifies = "The person owns or builds a hosted agent workflow and describes their team's use, evaluation, or operation of isolated execution environments. Prefer concrete needs around persistence, Docker or browsers, startup, scale, or cost. A competitor mention by itself does not qualify."
 more_like = "An engineering lead explains how their product runs customer code in Daytona or E2B and what they need to change about the sandbox setup."
 less_like = "A developer shares a sandbox comparison but gives no evidence that they run agents or are choosing infrastructure for a workload."
+
+[[searches]]
+lane = "problem"
+phrase = "agent sandbox"
+
+[[searches]]
+lane = "brand"
+phrase = "boat.dev"
+
+[[searches]]
+lane = "alternative"
+phrase = "E2B sandbox"
+
+[[searches]]
+lane = "alternative"
+phrase = "Daytona sandbox"
 
 [limits]
 source_age_days = 45

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 EXAMPLE = Path(__file__).resolve().parent / "examples" / "preview-environments"
 CHANNELS = {"linkedin", "x"}
+SEARCH_LANES = {"problem", "brand", "alternative"}
 SOURCE_KINDS = {"post", "comment", "reply", "quote"}
 EVIDENCE_KINDS = {"firsthand_problem", "explicit_work"}
 CSV_FIELDS = (
@@ -44,6 +45,19 @@ def read_brief(path):
         brief[key] = nonempty(brief.get(key), key)
     for key in ("target_roles", "signals", "alternatives", "exclusions"):
         brief[key] = values(brief.get(key, []), key, key in {"target_roles", "signals"})
+    if "searches" in brief:
+        searches = brief["searches"]
+        if not isinstance(searches, list) or not searches:
+            raise ValueError("searches needs at least one [[searches]] entry.")
+        phrases = set()
+        for search in searches:
+            if not isinstance(search, dict) or search.get("lane") not in SEARCH_LANES:
+                raise ValueError("Each search needs a lane of problem, brand, or alternative.")
+            phrase = nonempty(search.get("phrase"), "search phrase")
+            if phrase.casefold() in phrases or '"' in phrase or len(phrase.splitlines()) != 1:
+                raise ValueError("Search phrases must be unique single lines without double quotes.")
+            phrases.add(phrase.casefold())
+            search["phrase"] = phrase
     limits = brief.get("limits", {})
     for key in ("source_age_days", "role_age_days", "shortlist_size"):
         value = limits.get(key)
@@ -118,7 +132,11 @@ def show_plan(brief):
     print(f"Product: {brief['product']}\nProblem: {brief['problem']}")
     print(f"Prioritize roles: {', '.join(brief['target_roles'])}")
     print(f"Search signals: {', '.join(brief['signals'])}")
-    print(f"Also search for: {', '.join(brief['alternatives']) or '(none)'}")
+    print(f"Alternatives: {', '.join(brief['alternatives']) or '(none)'}")
+    if "searches" in brief:
+        print("Live queries for LinkedIn and X, in priority order:")
+        for search in brief["searches"]:
+            print(f"  {search['lane']}: {search['phrase']}")
     print(f"Qualify when: {brief['qualifies']}")
     print(f"Pass over: {', '.join(brief['exclusions']) or '(none listed)'}")
     print(f"More like: {brief['more_like']}\nLess like: {brief['less_like']}")
@@ -132,6 +150,11 @@ def match_terms(text, terms):
         term for term in terms
         if re.search(r"(?<!\w)" + re.escape(term.casefold()) + r"(?!\w)", text.casefold())
     ]
+
+
+def discovery_terms(brief):
+    queries = [search["phrase"] for search in brief.get("searches", [])]
+    return list(dict.fromkeys(brief["signals"] + brief["alternatives"] + queries))
 
 
 def checked_url(value, label):
@@ -180,7 +203,7 @@ def build_queue(brief, corpus, as_of=None):
 
     matches = {}
     source_urls = set()
-    terms = list(dict.fromkeys(brief["signals"] + brief["alternatives"]))
+    terms = discovery_terms(brief)
     for key, source in observations.items():
         if source["channel"] not in CHANNELS or source["kind"] not in SOURCE_KINDS:
             raise ValueError(f"Unsupported channel or source type for {key}.")
@@ -337,7 +360,11 @@ def apply_reviews(queue, decisions):
                         "source_url": source["url"], "published_on": source["published_on"],
                         "excerpt": excerpt, "reason": reason, "history_status": "unchecked",
                         "sightings": [
-                            {"channel": item["channel"], "url": item["url"]} for item in row["sources"]
+                            {
+                                "channel": item["channel"], "url": item["url"],
+                                **({"found_by": item["found_by"]} if item.get("found_by") else {}),
+                            }
+                            for item in row["sources"]
                         ],
                     })
                     outcome = "shortlisted"
@@ -403,8 +430,8 @@ def main(argv=None):
     live.add_argument("--brief", type=Path, default=Path("brief.toml"))
     live.add_argument("--out", type=Path, required=True)
     live.add_argument("--budget-usd", required=True, help="maximum Treg spend for this run, up to $1")
-    live.add_argument("--searches", type=int, choices=range(1, 5), default=2, metavar="1–4",
-                      help="number of queries per channel")
+    live.add_argument("--searches", type=int, choices=range(1, 5), metavar="1–4",
+                      help="queries per channel (default: up to four from an explicit plan, otherwise two)")
     live.add_argument("--profiles", type=int, choices=range(11), default=4, metavar="0–10",
                       help="maximum independent LinkedIn role lookups")
     live.add_argument("--dry-run", action="store_true", help="preview the queries and cap offline")
@@ -427,7 +454,7 @@ def main(argv=None):
             from treg_adapter import atomic_json, run_live
 
             brief = read_brief(args.brief)
-            corpus = run_live(brief, args, match_terms)
+            corpus = run_live(brief, args, match_terms, discovery_terms(brief))
             if corpus is not None:
                 queue = build_queue(brief, corpus)
                 atomic_json(args.out / "queue.json", queue)

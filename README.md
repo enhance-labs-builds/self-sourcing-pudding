@@ -39,7 +39,9 @@ In a browsing-enabled coding agent, open this repository and ask:
 
 Start with the company's public LinkedIn page, X (Twitter) profile, or website. Use the official site to check that the profiles belong to the right company. Search the company name for customer examples, then search the problem language and alternatives for people outside the company's audience. Treat customer segments as hypotheses and use candidate evidence to decide who qualifies. The agent drafts the brief and reviews candidates. The CLI runs discovery and records evidence, spend, and decisions. Live discovery uses the Treg setup below.
 
-The [Boat brief](examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief.
+The [Boat brief](examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief. Edit its target roles and qualification criteria to steer who makes the shortlist. Edit the ordered `[[searches]]` entries to steer what the rig looks for. Each query has a purpose: `problem`, `brand`, or `alternative`. For example, Boat lists Daytona as an alternative and searches the more specific phrase `Daytona sandbox`.
+
+Run `live --dry-run` with your brief, output path, and budget to see the exact queries before spending. The rig runs the first four explicit queries on both channels by default, keeps posts containing the relevant phrase, and records what found each post. `--searches` lets you run fewer. Briefs without an explicit search plan still use the keyword defaults.
 
 ## Try a capped live run
 
@@ -57,7 +59,7 @@ python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
 python3 rig.py review --run runs/first-live
 ```
 
-The preview needs no credentials or network. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--searches` and `--profiles` to adjust the call count. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile. This version searches posts and leaves comment and reply expansion to a future adapter update.
+The preview needs no credentials or network. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--profiles` to adjust that limit. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile. This version searches posts and leaves comment and reply expansion to a future adapter update.
 
 The run saves settled charges and Treg call IDs in `treg-run.json`. Use `--resume` with the original command and run directory to reuse completed calls. If a call outcome is uncertain, check Treg Activity before making any more requests for that run. The rig saves only the fields it needs for review. Keep live run folders private and use the fictional demo when sharing example outputs.
 

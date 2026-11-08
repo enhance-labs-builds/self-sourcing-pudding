@@ -13,7 +13,8 @@ FILES = (
     "examples/blackbird/dovetail.toml", "examples/blackbird/heidi.toml",
     "examples/blackbird/lorikeet.toml", "examples/boat-sandboxes/brief.toml",
     "examples/preview-environments/brief.toml", "examples/preview-environments/corpus.json",
-    "examples/preview-environments/decisions.json", "examples/typescript-boundaries/brief.toml",
+    "examples/preview-environments/decisions.json", "examples/preview-environments/shortlist.csv",
+    "examples/typescript-boundaries/brief.toml",
 )
 
 

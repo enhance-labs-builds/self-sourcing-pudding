@@ -73,7 +73,7 @@ Use a verified story to improve the next social query. With `lane = "account"`, 
 
 The [Heidi](../examples/blackbird/heidi.toml), [Dovetail](../examples/blackbird/dovetail.toml), and [Lorikeet](../examples/blackbird/lorikeet.toml) briefs show the same approach across three markets.
 
-## Try a capped live run
+## Run a live search
 
 Sign in to the [Treg dashboard](https://treg.to/app?ref=docs). Use a team with prepaid balance and no connected provider keys or custom tools. Copy the team slug and create an API key for that team. Pudding uses that key as its token. Keep it out of the brief and repository.
 
@@ -87,7 +87,13 @@ printf '\n'
 export TREG_TOKEN
 ```
 
-For your own URL, go back to the [guided live command](../README.md#search-linkedin-and-x-for-real-leads). To run the example brief directly from the command line, use the following commands:
+From the repository folder, start a live search with your walkthrough project. Replace `YOUR_LIMIT` with the most you want this run to use in US dollars. Searches, role checks, and work email lookup share that budget.
+
+```sh
+.pudding/bin/pudding walk --project runs/my-company --live --budget-usd YOUR_LIMIT
+```
+
+To run the example brief directly from the command line, use the following commands:
 
 ```sh
 python3 rig.py live --brief examples/typescript-boundaries/brief.toml \

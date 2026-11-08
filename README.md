@@ -1,16 +1,22 @@
 # Self-Sourcing Pudding
 
-**Find leads who are talking about the problem you solve.**
+**Find leads already talking about the problem you solve.**
 
-When someone posts that their team needs two calls to get every new customer set up, you have a reason to look them up. We built Pudding for teams that use AI to find their next customers.
+Self-Sourcing Pudding is an open-source lead discovery tool for teams that use AI to find their next customers. Start with your company website. Pudding drafts who to look for, what problem they’re working on, and what they might say about it. Edit or approve that brief, then search public posts on LinkedIn and X for people to review.
 
-Start with your company website. Pudding drafts a brief you can edit. It describes who you want to find, what problem they’re working on, and what they might say about it. Once you approve the brief, you can run a search of public posts on LinkedIn and X whenever you want new leads. Each preview shows up to 20 people to review. An X author becomes eligible for the shortlist once you match them to a verified LinkedIn profile.
+[See the sample CSV](examples/preview-environments/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Run a live search](#search-linkedin-and-x-for-real-leads)
 
-You decide who makes the shortlist. Each run writes its own CSV with the person’s current LinkedIn profile, the dated post, and the quote that made them a fit. Live runs can add a verified work email when one is available. On the next pass, Pudding skips people whose evidence you’ve already reviewed and can bring someone back when there’s new evidence.
+## See why a lead made the list
+
+Say you sell a tool that helps teams test changes before they ship. In the fictional demo, Nia Alder, a platform engineer, writes:
+
+> I maintain the preview deploy for our app team. Builds fail after a database reset, and I spent Friday restoring previews so the team could review changes.
+
+That gives you a reason to look up Nia and something specific to talk about. You decide who makes the shortlist. Each run saves a CSV with the person’s profile, the dated post, and the quote behind your decision. A later run can bring them back when there’s new evidence.
 
 ## Try it with your own URL
 
-The free walkthrough reads your public website to draft the brief. You’ll practise reviewing fictional candidates for **US$0**, without a Treg account. You’ll need **Python 3.11+** on **macOS or Linux**. If you want to see the CSV first, [run the offline demo](#see-a-sample-shortlist).
+The free walkthrough reads your public website to draft the brief. You’ll practise reviewing fictional candidates for **US$0**, without a Treg account. You’ll need **Python 3.11+** on **macOS or Linux**.
 
 ### With an AI agent
 
@@ -30,21 +36,17 @@ Paste your company URL when prompted. If the draft needs work, edit who owns the
 
 You can also [download the tester ZIP](https://github.com/enhance-labs-builds/self-sourcing-pudding/releases/download/v0.1.0/self-sourcing-pudding-tester.zip), unzip it, and open `START HERE.txt`.
 
-### See a sample shortlist
+### Run the offline demo
 
-Clone the repo as above and run `python3 rig.py demo` from the repository folder. This runs offline and puts two fictional leads in `runs/demo/shortlist.csv`, with their profiles, source links, dates, quotes, and reasons for making the shortlist.
+Clone the repo as above and run `python3 rig.py demo` from the repository folder. This recreates the [sample CSV](examples/preview-environments/shortlist.csv) at `runs/demo/shortlist.csv` without any network access.
 
 ## Search LinkedIn and X for real leads
 
-Use a live run to see what turns up in your market. Pudding uses Treg for search, role checks, and work email lookup. [Set up a Treg team with prepaid balance and an API token](docs/guide.md#try-a-capped-live-run), then run this from the repository folder where you installed Pudding:
+Run a live search whenever you want fresh leads. Pudding uses Treg for searches, role checks, and work email lookup. [Treg](https://treg.to/) offers **US$1 in starter credit** once per new verified account, with no card required. Usage draws from your Treg balance. [Set up Treg and run a live search](docs/guide.md#run-a-live-search).
 
-```sh
-.pudding/bin/pudding walk --project runs/my-company --live --budget-usd 0.50
-```
+Each preview brings back up to 20 people for review. X authors are eligible for the shortlist once you match them to a verified LinkedIn profile. Live runs can add verified work emails when available.
 
-This command caps total Treg spend for the run at **US$0.50**, shared across searches, role checks, and work email lookup. How many people you get to review depends on what they’ve posted, whose role you can verify, and the budget left.
-
-After your first live review, open `runs/my-company/runs/live-preview/shortlist.csv`. Use the printed command for another pass with the same brief and votes. If a run is interrupted, use its continuation command to resume under the original cap.
+After your first live review, open `runs/my-company/runs/live-preview/shortlist.csv`. Pudding prints a command for another pass with the same brief and votes. The next pass skips people whose evidence you’ve already reviewed.
 
 ## Go further
 

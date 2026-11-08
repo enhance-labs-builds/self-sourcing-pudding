@@ -13,7 +13,7 @@ On macOS or Linux, run `bash install.sh` from an extracted checkout. In the down
 .pudding/bin/pudding walk --live --budget-usd 0.50
 ```
 
-The second command uses the Treg setup below for real candidates. Each walkthrough saves its brief, candidate review and shortlist in its project folder. Run `walk --project PATH` with the same live or example options to return to a walkthrough.
+The second command uses the Treg setup below for real candidates. Each walkthrough saves its brief, candidate review and shortlist in its project folder. Run `walk --project PATH` with the same live or example options to return to a walkthrough. To review a revised brief in the same project, add a fresh `--run NAME`. Previous feedback still applies.
 
 ## Try it in one command
 
@@ -58,7 +58,7 @@ python3 rig.py pilot status --project runs/boat
 
 The preview shows up to 20 people with a current LinkedIn role and dated source. `holds.json` contains candidates with an identity or freshness gap. To include an X author in the preview, supply a reviewed identity match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
 
-Review saves yay/nay with evidence or a reason. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. `pilot run --batch` uses `limits.batch_target` from the approved brief, starting at 100. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The approved target and spend cap bound the run. The pilot is run on demand.
+Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. `pilot run --batch` uses `limits.batch_target` from the approved brief, starting at 100. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The approved target and spend cap bound the run. The pilot is run on demand.
 
 Live pilot runs also look up work emails for review candidates whose current roles match the brief. The rig checks the website listed on the person's current LinkedIn company page, then independently verifies any address that matches that domain. Review shows verified emails as soon as the run finishes and carries them into the shortlist. The same spend cap covers discovery, role checks, and email. Use `--no-email` to spend the cap on discovery and role checks alone. For a reviewed X identity, include the current employer's LinkedIn `company_url` in `--identities` to make it eligible for email lookup. Keep run folders private.
 

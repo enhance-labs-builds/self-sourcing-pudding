@@ -13,7 +13,7 @@ class WalkthroughTest(TestCase):
         html = ("<title>Voice guidance for every user</title>"
                 "<meta name='description' content='Screen share voice agents for your customer lifecycle'>"
                 "<h2>Customer onboarding</h2>")
-        answers = ["example.com", "a", "y", "", "", "", "", "n", "", "q"]
+        answers = ["example.com", "a", "y", "y", "", "", "", "", "y", "n", "n", ""]
         console = StringIO()
         with TemporaryDirectory() as folder, redirect_stdout(console), \
                 patch("url_seed.fetch_page", return_value=("https://example.com/", html)), \
@@ -24,6 +24,7 @@ class WalkthroughTest(TestCase):
             brief = rig.read_brief(project / "brief.toml")
             preview = rig.read_json(out / "preview.json")
             shortlist = rig.read_json(out / "shortlist.json")
+            review = rig.read_json(out / "review.json")
             state = rig.read_json(project / "state.json")
         provider.assert_not_called()
         self.assertEqual(brief["signals"][0], "customer onboarding")
@@ -33,4 +34,5 @@ class WalkthroughTest(TestCase):
         self.assertEqual(shortlist["leads"][0]["work_email_status"], "example")
         self.assertTrue(shortlist["leads"][0]["work_email"].endswith(".example"))
         self.assertEqual({v["vote"] for v in state["feedback"].values()}, {"yay", "nay"})
+        self.assertTrue(any(r["outcome"] == "held" and "Saved for follow-up" in r["reason"] for r in review["outcomes"]))
         self.assertIn("Profiles, posts and work emails below are fictional", console.getvalue())

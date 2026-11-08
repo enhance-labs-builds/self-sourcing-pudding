@@ -19,6 +19,7 @@ def setup_command(commands):
     walk.add_argument("url", nargs="?", help="company website or social profile")
     walk.add_argument("--website", help="company website for a social-profile URL")
     walk.add_argument("--project", type=Path, help="folder to save or continue the walkthrough")
+    walk.add_argument("--run", help="choose a new run name to try a revised brief in the same project")
     walk.add_argument("--live", action="store_true", help="use Treg for a real preview")
     walk.add_argument("--budget-usd", help="total cap for a live run")
 
@@ -92,7 +93,7 @@ def run(args, rig):
         raise ValueError("Use --live with --budget-usd, or omit the cap for the example.")
     budget = dollars(micro_dollars(args.budget_usd)) if args.live else None
     mode = "live" if args.live else "example"
-    name = f"{mode}-preview"
+    name = args.run or f"{mode}-preview"
     project = args.project or Path("runs") / f"pudding-{uuid4().hex[:8]}"
     print("\nSelf-Sourcing Pudding")
     print(f"Live preview · LinkedIn, X and work email · maximum US${budget}" if args.live
@@ -109,6 +110,8 @@ def run(args, rig):
 
     with pilot.locked_project(project, rig) as state:
         out = pilot.run_path(project, name)
+        if (out / "preview.json").exists() and rig.read_json(out / "preview.json")["mode"] != mode:
+            raise ValueError("Choose a different --run name when switching between example and live previews.")
         if not (out / "preview.json").exists():
             print("\n1. Review your sourcing brief")
             if not review_brief(project, state, rig):

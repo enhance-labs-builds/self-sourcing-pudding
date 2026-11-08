@@ -313,6 +313,7 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     explicit_searches = "searches" in brief
     search_count = args.searches or (4 if explicit_searches else 2)
     searches = planned_searches(brief, search_count)
+    problem_terms = [search["phrase"] for search in searches if search["lane"] == "problem"]
     pages = getattr(args, "pages", 1)
     per_search = getattr(args, "results_per_search", 12)
     terms = [search["phrase"] for search in searches]
@@ -375,16 +376,20 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
             term = search["phrase"]
             linkedin, x = social_queries(search)
             linkedin_sort = "date" if search.get("workflow") else "relevance"
-            keep_terms = [term] if explicit_searches else discovery_terms
+            keep_terms = discovery_terms
+            if explicit_searches:
+                keep_terms = problem_terms if search["lane"] == "problem" else [term]
             requests = [(LINKEDIN, {"search": linkedin, "sortBy": linkedin_sort, "page": 1}, linkedin_posts),
                         (X, {"query": f"{x} since:{since}", "queryType": "Latest", "limit": per_search}, x_posts)]
             requests.extend((LINKEDIN, {"search": linkedin, "sortBy": linkedin_sort, "page": page}, linkedin_posts)
                             for page in range(2, pages + 1))
             for endpoint, payload, transform in requests:
                 result = bounded_call(client, path, state, endpoint, payload, quotes[endpoint], transform)
-                for post in (result or [])[:per_search]:
+                kept = 0
+                for post in result or []:
                     body = post["text"]
-                    if not match_terms(body, keep_terms) or match_terms(body, search.get("exclude_phrases", [])):
+                    matches = match_terms(body, keep_terms)
+                    if not matches or match_terms(body, search.get("exclude_phrases", [])):
                         continue
                     workflow_matches = match_terms(body, search.get("workflow", []))
                     if search.get("workflow") and not workflow_matches:
@@ -393,12 +398,17 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
                     if explicit_searches:
                         found_by = observed.setdefault("found_by", [])
                         query = {"lane": search["lane"], "phrase": term}
+                        if search["lane"] == "problem" and term not in matches:
+                            query["matched_problem_terms"] = matches
                         if workflow_matches:
                             query["workflow_matches"] = workflow_matches
                         if search.get("seed_url"):
                             query["seed_url"] = search["seed_url"]
                         if query not in found_by:
                             found_by.append(query)
+                    kept += 1
+                    if kept >= per_search:
+                        break
         if story_searches:
             stories = {}
             for story in story_searches:

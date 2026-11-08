@@ -9,6 +9,37 @@ from treg_adapter import LINKEDIN, PROFILE, WEB, X, Treg, bounded_call, journal,
 
 
 class TregSpendTest(TestCase):
+    def test_problem_search_checks_approved_phrases_before_limiting_results(self):
+        brief = {"signals": ["customer onboarding", "guided onboarding"], "alternatives": [],
+                 "searches": [{"lane": "problem", "phrase": term}
+                              for term in ("customer onboarding", "guided onboarding")],
+                 "limits": {"source_age_days": 30}}
+        client = Mock()
+        client.preflight.return_value = {LINKEDIN: 2000, X: 600}
+
+        def request(path, method, payload, headers):
+            if path.endswith(LINKEDIN) and payload["search"] == "guided onboarding":
+                result = {"elements": [
+                    {"linkedinUrl": "https://www.linkedin.com/posts/noise", "content": "Unrelated launch"},
+                    {"linkedinUrl": "https://www.linkedin.com/posts/relevant", "content": "Our customer onboarding needs work"},
+                ]}
+            elif path.endswith(LINKEDIN):
+                result = {"elements": []}
+            else:
+                result = {"output": {"data": {"items": []}}}
+            return 200, {"x-treg-cost-micro": "0"}, result
+
+        client.request.side_effect = request
+        with TemporaryDirectory() as root, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            args = SimpleNamespace(searches=None, budget_usd="0.10", profiles=0, dry_run=False, results_per_search=1,
+                                   out=Path(root) / "run", resume=False)
+            corpus = run_live(brief, args, match_terms, discovery_terms(brief))
+        self.assertEqual(len(corpus["observations"]), 1)
+        self.assertEqual(corpus["observations"][0]["found_by"], [
+            {"lane": "problem", "phrase": "guided onboarding", "matched_problem_terms": ["customer onboarding"]},
+        ])
+
     def test_explicit_queries_run_on_both_channels_and_preserve_why_a_post_was_found(self):
         brief = {
             "signals": ["agent sandbox"], "alternatives": ["Daytona"],

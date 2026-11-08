@@ -73,7 +73,7 @@ def draft(seed, target):
         workflow = ["sandbox", "coding agent", "code execution"]
     elif ("onboarding" in text or "implementation" in text) and ("customer" in text or "user" in text):
         data["problem"] = "Customer teams need to guide new users through setup and adoption without a live call for every account."
-        data["target_roles"] = ["Head of Customer Success", "Customer Onboarding Lead", "Implementation Manager", "Product Growth Lead"]
+        data["target_roles"] = ["Head of Customer Success", "Director of Customer Success", "Customer Onboarding Lead", "Implementation Manager", "Product Growth Lead"]
         data["signals"] = ["customer onboarding", "guided onboarding", "onboarding calls", "time to value"]
         data["qualifies"] = "The person owns customer onboarding or adoption and describes a bottleneck, an experiment, or a rollout their team is working on."
         workflow = ["customer onboarding", "activation", "guided setup"]
@@ -341,6 +341,10 @@ def interactive_votes(queue):
             code = input("Reason code [weak_evidence]: ").strip() or "weak_evidence"
             votes[row["id"]] = {"vote": "nay", "reason_code": code}
         if action == "y":
+            qualify = input("Add to the shortlist using firsthand evidence? [y/N] ").strip().lower()
+            if qualify not in {"y", "yes"}:
+                votes[row["id"]] = {"vote": "yay", "reason": "Saved for follow-up. Firsthand evidence still needs review."}
+                continue
             i = input("Which source proves the fit? [1] ").strip() or "1"
             while not i.isascii() or not i.isdecimal() or not 1 <= int(i) <= len(sources):
                 i = input(f"Choose a source from 1 to {len(sources)}: ").strip()
@@ -380,10 +384,16 @@ def review(args, state, rig):
         label = feedback_key(row)
         previous = updates.get(label, state["feedback"].get(label, {}))
         sources = sorted(set(previous.get("seen_sources", [])) | {item["url"] for item in row["sources"]})
-        decision = {"decision": "qualify" if vote["vote"] == "yay" else "pass",
-                    "reason": vote.get("reason") or code.replace("_", " ")}
+        proof_fields = ("source_id", "excerpt", "evidence_kind")
+        decision = {"decision": "pass", "reason": vote.get("reason") or code.replace("_", " ")}
         if vote["vote"] == "yay":
-            decision.update({field: vote[field] for field in ("source_id", "excerpt", "evidence_kind")})
+            proof = {field: vote[field] for field in proof_fields if field in vote}
+            if proof and len(proof) != len(proof_fields):
+                raise ValueError("To add a yay to the shortlist, include the source, exact excerpt, and evidence kind.")
+            if proof:
+                decision.update(proof, decision="qualify")
+            else:
+                decision.update(decision="hold", reason=vote.get("reason") or "Saved for follow-up. Firsthand evidence still needs review.")
             code = "other"
         updates[label] = {"vote": vote["vote"], "reason_code": code, "reason": decision["reason"],
                           "seen_sources": sources, "run": args.run, "brief_version": queue["brief_version"],

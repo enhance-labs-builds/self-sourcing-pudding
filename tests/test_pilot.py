@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import rig
 from treg_adapter import COMPANY, LINKEDIN, PROFILE, VERIFY_EMAIL, WORK_EMAIL, X
-from work_email import verified, work_address
+from work_email import candidate_email, verified, work_address
 
 
 class PilotTest(TestCase):
@@ -126,6 +126,10 @@ class PilotTest(TestCase):
         proof = {"email": address, "status": "valid", "accept_all": False, "webmail": False}
         self.assertTrue(verified({"data": proof}, address))
         self.assertFalse(verified({"data": {**proof, "accept_all": True}}, address))
+        result = candidate_email({"profile_url": profile, "company": "Stealth Startup",
+                                  "company_url": "https://www.linkedin.com/company/stealth-startup"},
+                                 None, None, None, None)
+        self.assertEqual(result, {"status": "employer_unconfirmed"})
 
     def test_reviewed_x_identity_merges_with_the_same_linkedin_profile(self):
         from pilot import attach_identities

@@ -8,6 +8,9 @@ from treg_adapter import (COMPANY, EMAIL_ENDPOINTS, PER_CALL, VERIFY_EMAIL, WORK
 from url_seed import public_url
 
 
+UNDISCLOSED_EMPLOYERS = {"stealth", "stealth mode", "stealth startup", "not disclosed", "confidential", "self-employed"}
+
+
 def company_website(data, company_url):
     company = data.get("element") or {}
     website = company.get("website")
@@ -44,7 +47,8 @@ def verified(data, address):
 def candidate_email(person, client, path, ledger, quotes):
     profile = linkedin_profile(person["profile_url"])
     company_url = linkedin_url(person.get("company_url"), "company")
-    if not company_url:
+    employer = " ".join(person["company"].split()).casefold()
+    if not company_url or employer in UNDISCLOSED_EMPLOYERS:
         return {"status": "employer_unconfirmed"}
 
     def remaining():
@@ -56,7 +60,7 @@ def candidate_email(person, client, path, ledger, quotes):
         return {"status": "budget_limit"}
     site = bounded_call(client, path, ledger, COMPANY, company_params, quotes[COMPANY],
                         lambda data: company_website(data, company_url))
-    if not site or " ".join(site["name"].split()).casefold() != " ".join(person["company"].split()).casefold():
+    if not site or " ".join(site["name"].split()).casefold() != employer:
         return {"status": "employer_unconfirmed"}
     domain = urlsplit(site["url"]).hostname.removeprefix("www.")
     profile_params = {"profileUrl": profile}

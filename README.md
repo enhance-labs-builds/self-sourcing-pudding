@@ -2,7 +2,7 @@
 
 Describe a problem, find people who talk about the work, and produce a shortlist that shows the evidence behind each decision.
 
-This first pass runs offline with Python 3.11 or newer. It reads local records and exports a research shortlist. The example uses fictional people, companies, posts, and profile links.
+Sourcing Rig runs with Python 3.11 or newer. The offline example uses fictional people, companies, posts, and profile links. An optional live adapter can build a review queue from public posts.
 
 ## Try it in one command
 
@@ -30,6 +30,28 @@ Run `init` without `--example` for guided setup. The questions cover your produc
 Discovery looks for your phrases in local LinkedIn and X records. It also opens comments, replies, and quotes attached to matching posts. It groups sightings by the corpus's verified person ID and puts current candidates with a matching role higher in the queue. A role, keyword, or competitor match helps find people to review. You make the fit decision from the original text and current role.
 
 Choose firsthand problem, explicit work, hold, or pass. To qualify someone, pick a current source attributed to that person, keep an exact excerpt, and record why it fits your brief. An unresolved identity, an old role check, or a lack of current evidence holds the candidate. Contact history is marked `unchecked`.
+
+## Try a capped live run
+
+The live adapter uses the [hosted Treg API](https://treg.to/docs) on macOS and Linux. Use a Treg team with prepaid balance and no connected provider keys or custom tools. The adapter checks this up front so charges go through Treg's metered route. Each tester supplies their own team slug and API token through `TREG_ORG` and `TREG_TOKEN`. Keep tokens out of the brief and repository.
+
+```sh
+export TREG_ORG='your-team-slug'
+read -rs TREG_TOKEN
+export TREG_TOKEN
+
+python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
+  --out runs/first-live --budget-usd 0.10 --dry-run
+python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
+  --out runs/first-live --budget-usd 0.10
+python3 rig.py review --run runs/first-live
+```
+
+The preview needs no credentials or network. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--searches` and `--profiles` to adjust the call count. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile. This version searches posts and leaves comment and reply expansion to a future adapter update.
+
+The run saves settled charges and Treg call IDs in `treg-run.json`. Use `--resume` with the original command and run directory to reuse completed calls. If a call outcome is uncertain, check Treg Activity before making any more requests for that run. The rig saves only the fields it needs for review. Keep live run folders private and use the fictional demo when sharing example outputs.
+
+Sourcing Rig is an independent client of Treg. Treg provides the upstream access. See the [Treg terms](https://treg.to/terms) and the applicable upstream terms for use of live data.
 
 ## Bring your own offline records
 

@@ -1,0 +1,15 @@
+schema_version = 1
+product = "Archangel checks architecture rules in TypeScript repositories."
+problem = "TypeScript teams need to enforce module boundaries and catch unwanted dependencies as repositories grow."
+target_roles = ["Staff Software Engineer", "Principal Engineer", "Platform Engineer", "Tech Lead", "Software Engineer"]
+signals = ["module boundaries", "architecture tests", "circular dependencies", "import boundaries"]
+alternatives = ["dependency-cruiser", "eslint-plugin-boundaries", "Nx enforce module boundaries"]
+exclusions = ["vendor launches without own usage", "tutorials without evidence of owning the workflow", "other languages with no TypeScript relevance"]
+qualifies = "The person describes enforcing boundaries or resolving dependency drift in a TypeScript or JavaScript repository they own or work on."
+more_like = "An engineer describes setting rules between packages in their TypeScript monorepo and the violations those rules caught."
+less_like = "A framework roundup names dependency-cruiser without describing where or why the author used it."
+
+[limits]
+source_age_days = 45
+role_age_days = 30
+shortlist_size = 5

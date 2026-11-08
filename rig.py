@@ -205,12 +205,19 @@ def build_queue(brief, corpus, as_of=None):
         if not matches[key] and not matches.get(parent):
             continue
         person = people.get(source.get("person_id"))
-        candidate_key = f"person:{person['id']}" if person else f"source:{key}"
+        hint = source.get("profile_hint")
+        if hint:
+            checked_url(hint, "profile_hint")
+        candidate_key = f"person:{person['id']}" if person else (
+            f"profile:{hint}" if hint else f"source:{key}"
+        )
         if candidate_key not in candidates:
-            hold = (
-                age_hold(person.get("role_checked_on"), as_of, limits["role_age_days"], "Role check")
-                if person else "Author has no verified profile binding."
-            )
+            if person:
+                hold = age_hold(person.get("role_checked_on"), as_of, limits["role_age_days"], "Role check")
+            elif hint:
+                hold = "Post links to a professional profile, but no single current role was verified."
+            else:
+                hold = "Author has no verified profile binding."
             candidates[candidate_key] = {
                 "id": candidate_key, "person": person, "hold": hold, "sources": [],
                 "role_matches": match_terms(person["role"], brief["target_roles"]) if person else [],
@@ -247,6 +254,8 @@ def interactive_review(queue):
         print()
         person = row["person"]
         print(f"{person['name']} · {person['role']} · {person['company']}" if person else row["sources"][0]["author"])
+        if person:
+            print(f"  Profile: {person['profile_url']}")
         usable = []
         for source in row["sources"]:
             if source["hold"]:
@@ -390,6 +399,16 @@ def main(argv=None):
     source.add_argument("--corpus", type=Path, default=EXAMPLE / "corpus.json")
     source.add_argument("--out", type=Path, required=True)
     source.add_argument("--as-of", metavar="YYYY-MM-DD", help="override the corpus snapshot date")
+    live = commands.add_parser("live", help="build a review queue from public posts using Treg")
+    live.add_argument("--brief", type=Path, default=Path("brief.toml"))
+    live.add_argument("--out", type=Path, required=True)
+    live.add_argument("--budget-usd", required=True, help="maximum Treg spend for this run, up to $1")
+    live.add_argument("--searches", type=int, choices=range(1, 5), default=2, metavar="1–4",
+                      help="number of queries per channel")
+    live.add_argument("--profiles", type=int, choices=range(11), default=4, metavar="0–10",
+                      help="maximum independent LinkedIn role lookups")
+    live.add_argument("--dry-run", action="store_true", help="preview the queries and cap offline")
+    live.add_argument("--resume", action="store_true", help="reuse completed calls in the same run")
     review = commands.add_parser("review", help="review a queue and export a shortlist")
     review.add_argument("--run", type=Path, required=True)
     review.add_argument("--decisions", type=Path, help="replay a review.json from the same queue")
@@ -404,6 +423,15 @@ def main(argv=None):
             queue = build_queue(read_brief(args.brief), read_json(args.corpus), args.as_of)
             new_run(args.out, queue)
             print(f"Queued {len(queue['candidates'])} candidates in {args.out / 'queue.json'}.")
+        elif args.command == "live":
+            from treg_adapter import atomic_json, run_live
+
+            brief = read_brief(args.brief)
+            corpus = run_live(brief, args, match_terms)
+            if corpus is not None:
+                queue = build_queue(brief, corpus)
+                atomic_json(args.out / "queue.json", queue)
+                print(f"Queued {len(queue['candidates'])} candidates. Run review to make fit decisions.")
         elif args.command == "review":
             queue = read_json(args.run / "queue.json")
             decisions = replay_decisions(args.decisions, queue) if args.decisions else interactive_review(queue)

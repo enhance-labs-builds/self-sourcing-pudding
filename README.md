@@ -1,8 +1,8 @@
-# Sourcing Rig
+# Self-Sourcing Pudding
 
 Describe a problem, find people who talk about the work, and produce a shortlist that shows the evidence behind each decision.
 
-Sourcing Rig runs with Python 3.11 or newer. The offline example uses fictional people, companies, posts, and profile links. An optional live adapter can build a review queue from public posts.
+Self-Sourcing Pudding runs with Python 3.11 or newer. The offline example uses fictional people, companies, posts, and profile links. An optional live adapter can build a review queue from public posts.
 
 ## Try it in one command
 
@@ -105,7 +105,7 @@ The preview needs no credentials or network. A live run checks current endpoint 
 
 The run saves settled charges and Treg call IDs in `treg-run.json`. Use `--resume` with the original command and run directory to reuse completed calls. If a call outcome is uncertain, check Treg Activity before making any more requests for that run. The rig saves only the fields it needs for review. Keep live run folders private and use the fictional demo when sharing example outputs.
 
-Sourcing Rig is an independent client of Treg. Treg provides the upstream access. See the [Treg terms](https://treg.to/terms) and the applicable upstream terms for use of live data.
+Self-Sourcing Pudding is an independent client of Treg. Treg provides the upstream access. See the [Treg terms](https://treg.to/terms) and the applicable upstream terms for use of live data.
 
 ## Bring your own offline records
 

@@ -75,13 +75,21 @@ The [Heidi](../examples/blackbird/heidi.toml), [Dovetail](../examples/blackbird/
 
 ## Try a capped live run
 
-The live adapter uses the [hosted Treg API](https://treg.to/docs) on macOS and Linux. Use a Treg team with prepaid balance and no connected provider keys or custom tools. The adapter checks this up front so charges go through Treg's metered route. Each tester supplies their own team slug and API token through `TREG_ORG` and `TREG_TOKEN`. Keep tokens out of the brief and repository.
+Sign in to the [Treg dashboard](https://treg.to/app?ref=docs). Use a team with prepaid balance and no connected provider keys or custom tools. Copy the team slug and create an API key for that team. Pudding uses that key as its token. Keep it out of the brief and repository.
+
+Set these in the terminal where you’ll run Pudding. Paste your token at the prompt and press Enter.
 
 ```sh
 export TREG_ORG='your-team-slug'
+printf 'Treg API token: '
 read -rs TREG_TOKEN
+printf '\n'
 export TREG_TOKEN
+```
 
+For your own URL, go back to the [guided live command](../README.md#search-linkedin-and-x-for-real-leads). To run the example brief directly from the command line, use the following commands:
+
+```sh
 python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
   --out runs/first-live --budget-usd 0.10 --dry-run
 python3 rig.py live --brief examples/typescript-boundaries/brief.toml \

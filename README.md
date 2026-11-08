@@ -39,9 +39,31 @@ In a browsing-enabled coding agent, open this repository and ask:
 
 Start with the company's public LinkedIn page, X (Twitter) profile, or website. Use the official site to check that the profiles belong to the right company. Search the company name for customer examples, then search the problem language and alternatives for people outside the company's audience. Treat customer segments as hypotheses and use candidate evidence to decide who qualifies. The agent drafts the brief and reviews candidates. The CLI runs discovery and records evidence, spend, and decisions. Live discovery uses the Treg setup below.
 
-The [Boat brief](examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief. Edit its target roles and qualification criteria to steer who makes the shortlist. Edit the ordered `[[searches]]` entries to steer what the rig looks for. Each query has a purpose: `problem`, `brand`, or `alternative`. For example, Boat lists Daytona as an alternative and searches the more specific phrase `Daytona sandbox`.
+The [Boat brief](examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief. Edit its target roles and qualification criteria to steer who makes the shortlist. Edit the ordered `[[searches]]` entries to steer what the rig looks for: `problem`, `brand`, `alternative`, or `account`. For example, Boat lists Daytona as an alternative and searches the more specific phrase `Daytona sandbox`.
 
 Run `live --dry-run` with your brief, output path, and budget to see the exact queries before spending. The rig runs the first four explicit queries on both channels by default, keeps posts containing the relevant phrase, and records what found each post. `--searches` lets you run fewer. Briefs without an explicit search plan still use the keyword defaults.
+
+## Find people working with alternatives
+
+Pair an alternative with the workflow people actually talk about. The rig asks for the name and at least one workflow phrase on both channels, then checks both against the same post. LinkedIn requests recent posts first for these searches. Use `[[customer_stories]]` to find case studies in the competitor's own customer story directory. Both routes use the same run budget.
+
+```toml
+[[searches]]
+lane = "alternative"
+phrase = "Abridge"
+workflow = ["clinical documentation", "ambient scribe", "AI scribe"]
+
+[[customer_stories]]
+competitor = "Abridge"
+site = "https://www.abridge.com/case-study"
+workflow = "clinical documentation"
+```
+
+Customer stories land in `customer-story-queue.json` for review. Open the original and look for the named customer who describes doing the work. Check their current role independently and record the team, the quote, and when the work happened if known. A dated post describing a live evaluation or unresolved problem is a timing signal. A vendor case study can show installed use and surface a workflow owner. Keep the person's current buying intent unknown unless they give you separate evidence of it.
+
+Use a verified story to improve the next social query. With `lane = "account"`, set `phrase` to the customer name and `workflow` to the phrases from the story. Set `seed_url` to keep the original story linked to posts found by that query. You can also search those phrases on their own with `lane = "problem"` to find teams describing the same pain without naming a tool. For an ambiguous name, add narrow `exclude_phrases` to that query, such as `["Tata Sierra"]`; the rig filters those phrases from returned posts. Evaluate the original author and workflow each time, even when someone quotes a strong customer story. Use `--profiles 0` if you want to review the evidence before paying to check anyone's current role.
+
+The [Heidi](examples/blackbird/heidi.toml), [Dovetail](examples/blackbird/dovetail.toml), and [Lorikeet](examples/blackbird/lorikeet.toml) briefs show the same approach across three markets.
 
 ## Try a capped live run
 

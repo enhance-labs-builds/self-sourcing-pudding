@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 EXAMPLE = Path(__file__).resolve().parent / "examples" / "preview-environments"
 CHANNELS = {"linkedin", "x"}
-SEARCH_LANES = {"problem", "brand", "alternative"}
+SEARCH_LANES = {"problem", "brand", "alternative", "account"}
 SOURCE_KINDS = {"post", "comment", "reply", "quote"}
 EVIDENCE_KINDS = {"firsthand_problem", "explicit_work"}
 CSV_FIELDS = (
@@ -36,6 +36,13 @@ def values(value, label, required=True):
     return list(dict.fromkeys(nonempty(item, label) for item in value))
 
 
+def search_phrase(value, label):
+    phrase = nonempty(value, label)
+    if '"' in phrase or len(phrase.splitlines()) != 1:
+        raise ValueError(f"{label} must be a single line without double quotes.")
+    return phrase
+
+
 def read_brief(path):
     with path.open("rb") as file:
         brief = tomllib.load(file)
@@ -49,15 +56,42 @@ def read_brief(path):
         searches = brief["searches"]
         if not isinstance(searches, list) or not searches:
             raise ValueError("searches needs at least one [[searches]] entry.")
-        phrases = set()
+        queries = set()
         for search in searches:
             if not isinstance(search, dict) or search.get("lane") not in SEARCH_LANES:
-                raise ValueError("Each search needs a lane of problem, brand, or alternative.")
-            phrase = nonempty(search.get("phrase"), "search phrase")
-            if phrase.casefold() in phrases or '"' in phrase or len(phrase.splitlines()) != 1:
-                raise ValueError("Search phrases must be unique single lines without double quotes.")
-            phrases.add(phrase.casefold())
-            search["phrase"] = phrase
+                raise ValueError("Each search needs a lane of problem, brand, alternative, or account.")
+            search["phrase"] = search_phrase(search.get("phrase"), "Search phrase")
+            if "workflow" in search:
+                if search["lane"] not in {"alternative", "account"}:
+                    raise ValueError("Workflow terms can be paired with an alternative or account search.")
+                search["workflow"] = [
+                    search_phrase(term, "Workflow phrase")
+                    for term in values(search["workflow"], "workflow")
+                ]
+            elif search["lane"] == "account":
+                raise ValueError("An account search needs workflow terms from the original evidence.")
+            if "seed_url" in search:
+                search["seed_url"] = checked_url(search["seed_url"], "Search seed URL")
+            if "exclude_phrases" in search:
+                search["exclude_phrases"] = values(search["exclude_phrases"], "exclude_phrases")
+            query = (search["phrase"].casefold(), tuple(sorted(term.casefold() for term in search.get("workflow", []))))
+            if query in queries:
+                raise ValueError("Search queries must be unique.")
+            queries.add(query)
+    if "customer_stories" in brief:
+        stories = brief["customer_stories"]
+        if not isinstance(stories, list) or not 1 <= len(stories) <= 4:
+            raise ValueError("Use one to four [[customer_stories]] entries.")
+        for story in stories:
+            if not isinstance(story, dict):
+                raise ValueError("Each customer story search needs a competitor, site, and workflow.")
+            story["competitor"] = nonempty(story.get("competitor"), "Competitor")
+            story["workflow"] = search_phrase(story.get("workflow"), "Customer story workflow")
+            story["site"] = checked_url(story.get("site"), "Customer story site")
+            site = urlsplit(story["site"])
+            if (not re.fullmatch(r"[a-zA-Z0-9.-]+", site.netloc) or site.query or site.fragment
+                    or not re.fullmatch(r"/[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*/?", site.path)):
+                raise ValueError("Use a competitor's official HTTPS customer story directory.")
     limits = brief.get("limits", {})
     for key in ("source_age_days", "role_age_days", "shortlist_size"):
         value = limits.get(key)
@@ -136,7 +170,13 @@ def show_plan(brief):
     if "searches" in brief:
         print("Live queries for LinkedIn and X, in priority order:")
         for search in brief["searches"]:
-            print(f"  {search['lane']}: {search['phrase']}")
+            workflow = " + (" + " or ".join(search["workflow"]) + ")" if search.get("workflow") else ""
+            exclusions = "; skip: " + ", ".join(search["exclude_phrases"]) if search.get("exclude_phrases") else ""
+            print(f"  {search['lane']}: {search['phrase']}{workflow}{exclusions}")
+            if search.get("seed_url"):
+                print(f"    Seed: {search['seed_url']}")
+    for story in brief.get("customer_stories", []):
+        print(f"  Customer stories: {story['competitor']} · {story['workflow']} · {story['site']}")
     print(f"Qualify when: {brief['qualifies']}")
     print(f"Pass over: {', '.join(brief['exclusions']) or '(none listed)'}")
     print(f"More like: {brief['more_like']}\nLess like: {brief['less_like']}")

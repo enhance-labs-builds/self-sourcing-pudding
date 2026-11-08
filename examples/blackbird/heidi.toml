@@ -1,0 +1,47 @@
+schema_version = 1
+# Source: https://www.blackbird.vc/blog/investment-notes-heidi-health-series-b
+# Source: https://support.heidihealth.com/en/articles/8885059-what-is-heidi
+product = "Heidi helps clinicians create clinical notes and follow-up documentation from consultations. https://www.heidihealth.com/"
+problem = "Clinicians and practice teams spend time finishing notes and getting them into the health record. They may be deciding how to trial and roll out an ambient scribe."
+target_roles = ["Physician", "Doctor", "Clinical Lead", "Medical Director", "Chief Medical Information Officer", "CMIO", "Clinical Informatics", "Practice Manager"]
+signals = ["ambient AI", "clinical documentation", "AI medical scribe", "AI scribe", "notes after hours"]
+alternatives = ["Abridge", "Nabla", "Microsoft Dragon Copilot"]
+exclusions = ["Heidi staff", "confirmed Heidi customers", "vendors selling a scribe", "news and investor commentary", "posts containing identifiable patient information"]
+qualifies = "A clinician or clinical rollout owner gives a concrete first-person account of documentation workload, testing an ambient scribe, or implementing one for their team. Prefer a current comparison, pilot or rollout. Record the vendor and scope."
+more_like = "A medical director describes evaluating two scribes for a multi-clinician clinic and names the open EHR or workflow question."
+less_like = "A health tech investor shares a vendor announcement without responsibility for clinical documentation."
+
+[[searches]]
+lane = "alternative"
+phrase = "Abridge"
+workflow = ["clinical documentation", "ambient scribe", "AI scribe"]
+
+[[searches]]
+lane = "alternative"
+phrase = "Nabla"
+workflow = ["clinical documentation", "ambient scribe", "AI scribe"]
+
+[[searches]]
+lane = "account"
+phrase = "Riverside Health"
+workflow = ["ambient AI", "clinical documentation", "AI scribe"]
+seed_url = "https://www.abridge.com/case-study/riverside-health"
+
+[[searches]]
+lane = "problem"
+phrase = "after-hours documentation"
+
+[[customer_stories]]
+competitor = "Abridge"
+site = "https://www.abridge.com/case-study"
+workflow = "clinical documentation"
+
+[[customer_stories]]
+competitor = "Nabla"
+site = "https://www.nabla.com/case-studies"
+workflow = "clinical documentation"
+
+[limits]
+source_age_days = 45
+role_age_days = 30
+shortlist_size = 3

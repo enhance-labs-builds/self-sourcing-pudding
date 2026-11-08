@@ -1,0 +1,49 @@
+schema_version = 1
+# Source: https://www.blackbird.vc/portfolio/dovetail
+# Source: https://dovetail.com/
+# Source: https://condens.io/
+product = "Dovetail centralizes qualitative customer research and feedback so teams can find and reuse the evidence. https://dovetail.com/"
+problem = "Research and product teams need to make interviews and feedback reusable across projects without losing context or duplicating research."
+target_roles = ["UX Researcher", "User Researcher", "Design Researcher", "Research Operations", "ResearchOps", "Head of Research", "Research Lead", "Product Operations", "Director of Research"]
+signals = ["research repository", "research synthesis", "customer interviews", "customer feedback"]
+alternatives = ["Condens", "HeyMarvin", "Notion"]
+exclusions = ["Dovetail staff", "confirmed Dovetail customers", "consultant advice without a specific first-person rollout or workflow", "unrelated uses of Dovetail"]
+qualifies = "A research, design or product operations practitioner describes building, maintaining or replacing a shared research repository, or their team evaluating tooling for qualitative research and customer feedback. Scope the evidence to the actual team."
+more_like = "A ResearchOps lead explains migrating interview data out of spreadsheets, how researchers use it, and which tools the team is comparing."
+less_like = "An agency posts a roundup of UX tools or a course with no repository it owns."
+
+[[searches]]
+lane = "alternative"
+phrase = "Condens"
+workflow = ["user research", "UX research", "research repository"]
+
+[[searches]]
+lane = "alternative"
+phrase = "Marvin"
+workflow = ["user research", "UX research", "research repository"]
+exclude_phrases = ["Ginny Marvin", "Marvin Harris"]
+
+[[searches]]
+lane = "account"
+phrase = "Whatfix"
+workflow = ["research repository", "research operations", "user research"]
+seed_url = "https://condens.io/customers/whatfix/"
+
+[[searches]]
+lane = "problem"
+phrase = "research synthesis"
+
+[[customer_stories]]
+competitor = "Condens"
+site = "https://condens.io/customers"
+workflow = "research repository"
+
+[[customer_stories]]
+competitor = "Marvin"
+site = "https://heymarvin.com/customers"
+workflow = "research repository"
+
+[limits]
+source_age_days = 45
+role_age_days = 30
+shortlist_size = 3

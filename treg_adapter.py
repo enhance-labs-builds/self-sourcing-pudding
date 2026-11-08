@@ -18,8 +18,9 @@ from uuid import uuid4
 LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
 PROFILE = "harvestapi.linkedin.user.profile"
-METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET"}
-PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000}
+WEB = "bravesearch.web.search"
+METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", WEB: "GET"}
+PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, WEB: 5_000}
 
 
 def micro_dollars(value):
@@ -133,9 +134,45 @@ def journal(out, plan, org, resume):
 
 def planned_searches(brief, count):
     if "searches" in brief:
-        return [(search["lane"], search["phrase"]) for search in brief["searches"][:count]]
+        return brief["searches"][:count]
     terms = list(dict.fromkeys(brief["signals"][:1] + brief["alternatives"] + brief["signals"]))
-    return [("problem" if term in brief["signals"] else "alternative", term) for term in terms[:count]]
+    return [{"lane": "problem" if term in brief["signals"] else "alternative", "phrase": term}
+            for term in terms[:count]]
+
+
+def social_queries(search):
+    phrase = search["phrase"]
+    quoted = '"' + phrase.replace('"', "") + '"'
+    workflow = search.get("workflow")
+    if not workflow:
+        return phrase, quoted
+    alternatives = " OR ".join(f'"{term}"' for term in workflow)
+    return f"{quoted} AND ({alternatives})", f"{quoted} ({alternatives})"
+
+
+def story_query(search):
+    site = urlsplit(search["site"])
+    directory = (site.netloc + site.path).rstrip("/")
+    return f'site:{directory} "{search["workflow"]}"'
+
+
+def story_results(data, search):
+    site = urlsplit(search["site"])
+    directory = site.path.rstrip("/") + "/"
+    matches = {}
+    for row in (data.get("web") or {}).get("results", []):
+        url = urlsplit(row.get("url", ""))
+        if (url.scheme != "https" or url.username is not None or not url.hostname
+                or url.hostname.removeprefix("www.") != site.hostname.removeprefix("www.")
+                or not url.path.startswith(directory) or url.path.rstrip("/") == site.path.rstrip("/")):
+            continue
+        permalink = url._replace(query="", fragment="").geturl().rstrip("/")
+        matches[permalink] = {
+            "url": permalink, "title": row.get("title", ""),
+            "snippet": row.get("description", ""),
+            "status": "needs_source_review",
+        }
+    return list(matches.values())
 
 
 def billing(state):
@@ -251,11 +288,22 @@ def run_live(brief, args, match_terms, discovery_terms):
     explicit_searches = "searches" in brief
     search_count = args.searches or (4 if explicit_searches else 2)
     searches = planned_searches(brief, search_count)
-    terms = [phrase for _, phrase in searches]
+    terms = [search["phrase"] for search in searches]
+    story_searches = brief.get("customer_stories", [])
     budget = micro_dollars(args.budget_usd)
-    print(f"Treg run ceiling: US${dollars(budget)}. At most {len(terms) * 2} searches and {args.profiles} role lookups.", flush=True)
-    for lane, phrase in searches:
-        print(f"  LinkedIn and X [{lane}]: {phrase}", flush=True)
+    print(f"Treg run ceiling: US${dollars(budget)}. Up to {len(terms) * 2} social searches, "
+          f"{len(story_searches)} customer story searches, and {args.profiles} role lookups.", flush=True)
+    for search in searches:
+        lane = search["lane"]
+        linkedin, x = social_queries(search)
+        if search.get("workflow"):
+            print(f"  LinkedIn [{lane}]: {linkedin}\n  X [{lane}]: {x}", flush=True)
+        else:
+            print(f"  LinkedIn and X [{lane}]: {linkedin}", flush=True)
+        if search.get("exclude_phrases"):
+            print("    Skip these phrases for this search: " + ", ".join(search["exclude_phrases"]), flush=True)
+    for story in story_searches:
+        print(f"  Customer stories [{story['competitor']}]: {story_query(story)}", flush=True)
     if args.dry_run:
         return None
 
@@ -264,8 +312,14 @@ def run_live(brief, args, match_terms, discovery_terms):
         raise ValueError("Set TREG_TOKEN and TREG_ORG for your Treg team.")
     client = Treg(token, org)
     plan = {"brief": brief, "terms": terms, "profiles": args.profiles, "budget_micro": budget}
-    quotes = client.preflight({LINKEDIN, X, PROFILE} if args.profiles else {LINKEDIN, X})
-    if budget < sum(quotes[endpoint] for endpoint in (LINKEDIN, X)) * len(terms):
+    endpoints = {LINKEDIN, X}
+    if args.profiles:
+        endpoints.add(PROFILE)
+    if story_searches:
+        endpoints.add(WEB)
+    quotes = client.preflight(endpoints)
+    minimum = (quotes[LINKEDIN] + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
+    if budget < minimum:
         raise ValueError("The budget is below the listed cost of the planned searches. Reduce --searches or raise the cap.")
     with journal(args.out, plan, org, args.resume) as (path, state):
         if "as_of" not in state:
@@ -274,21 +328,44 @@ def run_live(brief, args, match_terms, discovery_terms):
         today = state["as_of"]
         since = (datetime.fromisoformat(today) - timedelta(days=brief["limits"]["source_age_days"])).date()
         posts = {}
-        for lane, term in searches:
+        for search in searches:
+            term = search["phrase"]
+            linkedin, x = social_queries(search)
+            linkedin_sort = "date" if search.get("workflow") else "relevance"
             keep_terms = [term] if explicit_searches else discovery_terms
             for endpoint, payload, transform in (
-                (LINKEDIN, {"search": term, "sortBy": "relevance", "page": 1}, linkedin_posts),
-                (X, {"query": f'"{term.replace(chr(34), "")}" since:{since}', "queryType": "Latest", "limit": 12}, x_posts),
+                (LINKEDIN, {"search": linkedin, "sortBy": linkedin_sort, "page": 1}, linkedin_posts),
+                (X, {"query": f"{x} since:{since}", "queryType": "Latest", "limit": 12}, x_posts),
             ):
                 result = bounded_call(client, path, state, endpoint, payload, quotes[endpoint], transform)
                 for post in (result or [])[:12]:
-                    if match_terms(post["text"], keep_terms):
-                        observed = posts.setdefault(post["url"], dict(post))
-                        if explicit_searches:
-                            found_by = observed.setdefault("found_by", [])
-                            query = {"lane": lane, "phrase": term}
-                            if query not in found_by:
-                                found_by.append(query)
+                    body = post["text"]
+                    if not match_terms(body, keep_terms) or match_terms(body, search.get("exclude_phrases", [])):
+                        continue
+                    workflow_matches = match_terms(body, search.get("workflow", []))
+                    if search.get("workflow") and not workflow_matches:
+                        continue
+                    observed = posts.setdefault(post["url"], dict(post))
+                    if explicit_searches:
+                        found_by = observed.setdefault("found_by", [])
+                        query = {"lane": search["lane"], "phrase": term}
+                        if workflow_matches:
+                            query["workflow_matches"] = workflow_matches
+                        if search.get("seed_url"):
+                            query["seed_url"] = search["seed_url"]
+                        if query not in found_by:
+                            found_by.append(query)
+        if story_searches:
+            stories = {}
+            for story in story_searches:
+                result = bounded_call(client, path, state, WEB, {"q": story_query(story), "count": 8},
+                                      quotes[WEB], lambda data: story_results(data, story))
+                for match in result or []:
+                    stories.setdefault((story["competitor"], match["url"]), {
+                        **match, "competitor": story["competitor"], "workflow": story["workflow"],
+                    })
+            atomic_json(args.out / "customer-story-queue.json", {"as_of": today, "stories": list(stories.values())})
+            print(f"Found {len(stories)} customer stories to check at the original source.")
         ranked = sorted(
             (post for post in posts.values() if post["profile"] and str(since) <= (post["published_on"] or "") <= today),
             key=lambda post: (bool(match_terms(post["headline"], brief["target_roles"])),

@@ -4,8 +4,8 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from rig import discovery_terms, match_terms
-from treg_adapter import LINKEDIN, PROFILE, X, Treg, bounded_call, journal, run_live
+from rig import build_queue, discovery_terms, match_terms, read_json
+from treg_adapter import LINKEDIN, PROFILE, WEB, X, Treg, bounded_call, journal, run_live
 
 
 class TregSpendTest(TestCase):
@@ -44,6 +44,70 @@ class TregSpendTest(TestCase):
         by_channel = {post["channel"]: post["found_by"] for post in corpus["observations"]}
         self.assertEqual(len(corpus["observations"]), 2)
         self.assertEqual(by_channel, {"linkedin": brief["searches"][:2], "x": brief["searches"][2:]})
+
+    def test_paired_queries_filter_collisions_and_keep_stories_out_of_social_review(self):
+        brief = {
+            "signals": ["customer support"], "alternatives": ["Sierra"],
+            "searches": [
+                {"lane": "alternative", "phrase": "Sierra", "workflow": ["customer support", "refund routing"],
+                 "exclude_phrases": ["Tata Sierra"]},
+                {"lane": "account", "phrase": "Example Bank", "workflow": ["refund routing"],
+                 "seed_url": "https://example.com/customers/bank"},
+            ],
+            "customer_stories": [
+                {"competitor": "Sierra", "site": "https://example.com/customers", "workflow": "customer support"},
+            ],
+            "limits": {"source_age_days": 30},
+        }
+        client = Mock()
+        client.preflight.return_value = {LINKEDIN: 2_000, X: 600, WEB: 5_000}
+
+        def request(path, method, payload, headers):
+            if path.endswith(WEB):
+                self.assertEqual(payload["q"], 'site:example.com/customers "customer support"')
+                return 200, {"x-treg-cost-micro": "5000"}, {"web": {"results": [
+                    {"url": "https://example.com/customers/bank?tracking=1", "title": "Example Bank"},
+                    {"url": "https://example.com/customers/bank#top", "title": "Example Bank"},
+                    {"url": "https://example.com/customers/"},
+                    {"url": "https://example.com/blog/case-study"},
+                    {"url": "https://elsewhere.example/customers/bank"},
+                ]}}
+            if path.endswith(LINKEDIN):
+                return 200, {"x-treg-cost-micro": "2000"}, {"elements": [
+                    {"linkedinUrl": "https://www.linkedin.com/posts/name-only", "content": "Sierra announced an event."},
+                    {"linkedinUrl": "https://www.linkedin.com/posts/workflow-only", "content": "Our refund routing works."},
+                    {"linkedinUrl": "https://www.linkedin.com/posts/wrong-entity", "content": "Tata Sierra customer support helped."},
+                    {"linkedinUrl": "https://www.linkedin.com/posts/work", "content": "Example Bank uses Sierra for refund routing."},
+                ]}
+            return 200, {"x-treg-cost-micro": "600"}, {"output": {"data": {"items": [
+                {"authorUsername": "builder", "id": "42", "text": "Sierra helps our customer support team."},
+            ]}}}
+
+        client.request.side_effect = request
+        with TemporaryDirectory() as root, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            args = SimpleNamespace(searches=None, budget_usd="0.0102", profiles=0, dry_run=False,
+                                   out=Path(root) / "run", resume=False)
+            corpus = run_live(brief, args, match_terms, discovery_terms(brief))
+            queue = build_queue(brief, corpus)
+            stories = read_json(args.out / "customer-story-queue.json")["stories"]
+
+        client.preflight.assert_called_once_with({LINKEDIN, X, WEB})
+        self.assertEqual(client.request.call_args_list[0].args[2]["search"],
+                         '"Sierra" AND ("customer support" OR "refund routing")')
+        self.assertEqual(client.request.call_args_list[1].args[2]["query"].split(" since:")[0],
+                         '"Sierra" ("customer support" OR "refund routing")')
+        self.assertEqual(client.request.call_args.args[3]["X-Treg-Route-Max-Cost"], "0.005000")
+        self.assertEqual(len(stories), 1)
+        self.assertEqual(stories[0]["url"], "https://example.com/customers/bank")
+        self.assertEqual(stories[0]["status"], "needs_source_review")
+        self.assertEqual(len(queue["candidates"]), 2)
+        self.assertEqual([p["found_by"] for p in corpus["observations"]], [
+            [{"lane": "alternative", "phrase": "Sierra", "workflow_matches": ["refund routing"]},
+             {"lane": "account", "phrase": "Example Bank", "workflow_matches": ["refund routing"],
+              "seed_url": "https://example.com/customers/bank"}],
+            [{"lane": "alternative", "phrase": "Sierra", "workflow_matches": ["customer support"]}],
+        ])
 
     def test_preflight_refuses_a_team_with_provider_keys(self):
         client = Treg("test-token", "demo-team")

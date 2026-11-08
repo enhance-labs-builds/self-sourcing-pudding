@@ -4,11 +4,13 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
+from http.client import HTTPException
 import json
 import os
 import re
 import tempfile
-from urllib.error import HTTPError, URLError
+from time import time
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
@@ -26,6 +28,12 @@ METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WEB: "GET
            WORK_EMAIL: "POST", VERIFY_EMAIL: "GET"}
 PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WEB: 5_000,
             WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000}
+# Treg retains a caller's idempotency key for 24 hours. Leave a margin for clock skew.
+SAFE_REPLAY_SECONDS = 23 * 60 * 60
+
+
+class PendingCall(ValueError):
+    """The run must stop spending until an outstanding call can be accounted for."""
 
 
 def micro_dollars(value):
@@ -66,10 +74,13 @@ class Treg:
             response = self.opener.open(request, timeout=35)
         except HTTPError as error:
             response = error
-        except (URLError, TimeoutError) as error:
+        except (OSError, HTTPException) as error:
             raise ValueError("Could not reach treg.to. Check the connection before continuing.") from error
         with response:
-            raw = response.read(8 * 1024 * 1024 + 1)
+            try:
+                raw = response.read(8 * 1024 * 1024 + 1)
+            except (OSError, HTTPException) as error:
+                raise ValueError("The connection to Treg dropped while receiving the response.") from error
             try:
                 body = json.loads(raw) if len(raw) <= 8 * 1024 * 1024 else None
             except (ValueError, UnicodeError):
@@ -122,7 +133,7 @@ def atomic_json(path, data):
 
 
 @contextmanager
-def journal(out, plan, org, resume):
+def journal(out, plan, org, resume, *, caller=None):
     import fcntl
 
     if not resume:
@@ -135,11 +146,12 @@ def journal(out, plan, org, resume):
             state = json.loads(path.read_text(encoding="utf-8"))
             if state["plan"] != plan or state["org"] != org:
                 raise ValueError("Resume needs the original brief, options and Treg team.")
-            if any(call["status"] == "pending" for call in state["calls"].values()):
-                raise ValueError("A call has an uncertain outcome. Check Treg Activity before starting any new run.")
+            if pending_calls(state) and state.get("caller") != caller:
+                raise PendingCall("Resume needs the original TREG_TOKEN while a charge is pending. Check Treg Activity if the token is unavailable.")
         else:
             state = {"plan": plan, "org": org, "id": uuid4().hex, "calls": {}}
             atomic_json(path, state)
+        state["caller"] = caller
         yield path, state
 
 
@@ -191,6 +203,10 @@ def billing(state):
     return sum(call.get("cost_micro", 0) for call in calls)
 
 
+def pending_calls(state):
+    return {key: call for key, call in state["calls"].items() if call["status"] == "pending"}
+
+
 def call_key(endpoint, params):
     return hashlib.sha256(json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()
 
@@ -198,35 +214,70 @@ def call_key(endpoint, params):
 def bounded_call(client, path, state, endpoint, params, quote, transform, *, reserve=0):
     key = call_key(endpoint, params)
     calls = state["calls"]
-    if key in calls:
-        return calls[key].get("result")
-    remaining = state["plan"]["budget_micro"] - billing(state) - reserve
-    ceiling = min(PER_CALL[endpoint], remaining)
-    if ceiling < quote:
-        print(f"Skipped {endpoint}: the remaining budget is below its listed price.")
-        return None
-    call = {"endpoint": endpoint, "params": params, "status": "pending", "reserved_micro": ceiling}
-    calls[key] = call
-    atomic_json(path, state)
-    status, headers, data = client.request("/call/" + endpoint, METHODS[endpoint], params, {
-        "Idempotency-Key": f"sourcing-rig-{state['id']}-{key[:24]}",
-        "X-Treg-Route-Max-Cost": dollars(ceiling),
-        "Cache-Control": "no-cache",
-    })
+    call = calls.get(key)
+    if call and call["status"] != "pending":
+        return call.get("result")
+    pending = pending_calls(state)
+    if pending and set(pending) != {key}:
+        raise PendingCall("A different request is still pending. No new paid requests were sent. Check Treg Activity.")
+    recovering = call is not None
+    if recovering:
+        started_at = call.get("started_at")
+        if (call.get("retry_blocked") or not call.get("idempotency_key") or started_at is None
+                or not 0 <= time() - started_at < SAFE_REPLAY_SECONDS):
+            reference = f" (call {call['call_id']})" if call.get("call_id") else ""
+            raise PendingCall(f"Treg cannot safely replay {endpoint}{reference}. Check Treg Activity; the reservation is still held.")
+    else:
+        remaining = state["plan"]["budget_micro"] - billing(state) - reserve
+        ceiling = min(PER_CALL[endpoint], remaining)
+        if ceiling < quote:
+            print(f"Skipped {endpoint}: the remaining budget is below its listed price.")
+            return None
+        call = {"endpoint": endpoint, "params": params, "status": "pending", "reserved_micro": ceiling,
+                "started_at": time(), "idempotency_key": f"sourcing-rig-{state['id']}-{key[:24]}"}
+        calls[key] = call
+        atomic_json(path, state)
+    ceiling = call["reserved_micro"]
+    try:
+        status, headers, data = client.request("/call/" + endpoint, METHODS[endpoint], call["params"], {
+            "Idempotency-Key": call["idempotency_key"],
+            "X-Treg-Route-Max-Cost": dollars(ceiling),
+            "Cache-Control": "no-cache",
+        })
+    except ValueError as error:
+        raise PendingCall(f"{error} The run is saved. Resume this same run when the connection is back.") from error
     cost = headers.get("x-treg-cost-micro", "")
-    call.update(http_status=status, call_id=headers.get("x-treg-call-id"))
+    replayed = headers.get("x-treg-idempotent-replay", "").lower() == "true"
+    call_id = headers.get("x-treg-call-id")
+    if not call_id and status == 410 and isinstance(data, dict):
+        detail = data.get("detail")
+        call_id = data.get("call_id") or (detail.get("call_id") if isinstance(detail, dict) else None)
+    if call_id is not None and re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", str(call_id)):
+        call["call_id"] = str(call_id)
+    call["http_status"] = status
     call["cache"] = headers.get("x-treg-cache")
+    if status in {202, 410}:
+        call["retry_blocked"] = True
     atomic_json(path, state)
-    # A bare transport or proxy error may hide a completed charge. Keep its reservation.
-    if status in {202, 409, 410} or not cost.isascii() or not cost.isdecimal():
-        if status in {400, 401, 402, 403, 404, 422, 428, 429} and headers.get("x-treg-error") == "1" and not cost:
-            cost = "0"
-        else:
-            raise ValueError(f"{endpoint} returned HTTP {status} without a settled receipt. Stopped; check Treg Activity.")
+    if status == 409:
+        raise PendingCall(f"Treg is still processing {endpoint}. Wait briefly, then resume this same run.")
+    if status in {202, 410}:
+        raise PendingCall(f"Treg did not return a replayable result for {endpoint}. Check Treg Activity; the reservation is still held.")
+    if replayed:
+        cost = headers.get("x-treg-original-cost-micro", "") if cost == "0" else ""
+    elif recovering and status != 200:
+        # A refusal to replay (e.g. failed authentication) does not settle the first request.
+        cost = ""
+    elif status in {400, 401, 402, 403, 404, 422, 428, 429} and headers.get("x-treg-error") == "1" and not cost:
+        cost = "0"
+    if not cost.isascii() or not cost.isdecimal():
+        raise PendingCall(f"{endpoint} returned HTTP {status} without a settled receipt. The run is saved; check Treg Activity.")
     charged = int(cost)
     if charged > ceiling:
-        raise ValueError(f"{endpoint} reported a charge above its reservation. Stopped; check Treg Activity.")
+        raise PendingCall(f"{endpoint} reported a charge above its reservation. Stopped; check Treg Activity.")
     call.update(status="settled", cost_micro=charged)
+    if replayed:
+        call["replayed"] = True
     try:
         if status == 200 and not headers.get("x-treg-upstream-failed"):
             call["result"] = transform(data)
@@ -237,6 +288,8 @@ def bounded_call(client, path, state, endpoint, params, quote, transform, *, res
         raise ValueError(f"Unexpected response from {endpoint}; the charge receipt was saved.") from error
     finally:
         atomic_json(path, state)
+    if replayed:
+        print(f"Recovered {endpoint}. Original charge: US${dollars(charged)}; replay: US$0.")
     return call.get("result")
 
 
@@ -365,7 +418,19 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
             print(f"Work email is unavailable: {error}")
         if email_quotes:
             email_reserve = sum(PER_CALL[endpoint] for endpoint in EMAIL_ENDPOINTS)
-    with journal(args.out, plan, org, args.resume) as (path, state):
+
+    def finish(corpus, path, state):
+        if enrich:
+            enrich(corpus, client, path, state, email_quotes)
+        print(f"Treg charged US${dollars(billing(state))} across {len(state['calls'])} calls. "
+              f"Kept {len(corpus['observations'])} posts and checked {len(corpus['people'])} current roles.")
+        return corpus
+
+    with journal(args.out, plan, org, args.resume, caller=hashlib.sha256(token.encode()).hexdigest()) as (path, state):
+        corpus_path = args.out / "corpus.json"
+        if args.resume and corpus_path.exists():
+            # The social and profile work finished. Don't reconsider skipped lookups during email recovery.
+            return finish(json.loads(corpus_path.read_text(encoding="utf-8")), path, state)
         if "as_of" not in state:
             state["as_of"] = datetime.now(timezone.utc).date().isoformat()
             atomic_json(path, state)
@@ -444,10 +509,5 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
                 observation["profile_hint"] = post["profile"]
             observations.append(observation)
         corpus = {"schema_version": 1, "as_of": today, "people": list(people.values()), "observations": observations}
-        atomic_json(args.out / "corpus.json", corpus)
-        if enrich:
-            enrich(corpus, client, path, state, email_quotes)
-        billed = billing(state)
-        print(f"Treg charged US${dollars(billed)} across {len(state['calls'])} calls. "
-              f"Kept {len(observations)} posts and checked {len(people)} current roles.")
-        return corpus
+        atomic_json(corpus_path, corpus)
+        return finish(corpus, path, state)

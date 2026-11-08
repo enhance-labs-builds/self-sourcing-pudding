@@ -1,0 +1,23 @@
+Self-Sourcing Pudding · two-run tester
+
+Requires macOS or Linux and Python 3.11 or newer.
+Open Terminal in this extracted folder. Run:
+
+  bash "Start Pudding.command" --project runs/my-company
+
+Paste your company URL, edit or approve the brief, then vote yay or nay
+on at least one candidate. This example reads your public site and uses
+fictional candidates and work emails. It costs US$0.
+
+Run it again with the same project and a new run name:
+
+  .pudding/bin/pudding walk --project runs/my-company --run example-pass-2
+
+Check that already reviewed evidence stays out of your second queue.
+The example can have an empty second queue once you review every card.
+
+For real LinkedIn and X searches with work emails, set up your own Treg
+token and team using README.md. Run the live command, then follow the
+printed command for a second pass. Each new pass has its own cap. If a
+run is interrupted, use the continuation command to resume it under
+its original cap.

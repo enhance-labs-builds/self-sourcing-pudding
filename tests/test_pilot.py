@@ -62,7 +62,7 @@ class PilotTest(TestCase):
                 run("run", "--run", "edited", "--corpus", str(path))
             self.assertEqual(edited.exception.code, 2)
 
-    def test_live_pilot_enriches_before_review_under_the_same_cap(self):
+    def test_live_pilot_recovers_email_without_losing_an_existing_review(self):
         now = datetime.now(timezone.utc)
         profiles = [f"https://www.linkedin.com/in/sourcing-rig-fixture-{i}" for i in range(2)]
         company = "https://www.linkedin.com/company/sourcing-rig-fixture"
@@ -84,10 +84,20 @@ class PilotTest(TestCase):
         }
         client = Mock()
         client.preflight.side_effect = client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
+        original = None
 
         def request(path, method, params, headers):
+            nonlocal original
             endpoint = path.removeprefix("/call/")
             self.assertGreaterEqual(float(headers["X-Treg-Route-Max-Cost"]), prices[endpoint] / 1_000_000)
+            if endpoint == WORK_EMAIL:
+                request_details = (method, params, headers)
+                if original is None:
+                    original = request_details
+                    raise ValueError("Connection dropped after billing")
+                self.assertEqual(request_details, original)
+                return 200, {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true",
+                             "x-treg-original-cost-micro": str(prices[endpoint])}, responses[endpoint]
             return 200, {"x-treg-cost-micro": str(prices[endpoint])}, responses[endpoint]
 
         client.request.side_effect = request
@@ -103,16 +113,27 @@ class PilotTest(TestCase):
 
             run("start", "example.com", "--starter", str(rig.EXAMPLE / "brief.toml"))
             run("approve", "--yes")
-            run("run", "--run", "live", "--budget-usd", "0.042", "--searches", "1", "--profiles", "2")
+            options = ("--run", "live", "--budget-usd", "0.042", "--searches", "1", "--profiles", "2")
+            run("run", *options)
             out = project / "runs/live"
             cards = rig.read_json(out / "queue.json")["candidates"]
             self.assertEqual(len(cards), 1)
-            self.assertEqual(cards[0]["work_email"]["address"], address)
-            self.assertEqual(rig.read_json(out / "preview.json")["spend_usd"], 0.03625)
-            self.assertEqual([c.args[0].removeprefix("/call/") for c in client.request.call_args_list], list(prices))
+            self.assertEqual(cards[0]["work_email"]["status"], "provider_unavailable")
+            self.assertIn("pending_spend_usd", rig.read_json(out / "preview.json"))
             rig.write_json(votes, {cards[0]["id"]: {"vote": "yay", "source_id": cards[0]["sources"][0]["id"],
                                                     "excerpt": excerpt, "evidence_kind": "explicit_work"}})
             run("review", "--run", "live", "--votes", str(votes))
+            state = rig.read_json(project / "state.json")
+            self.assertEqual(len(state["feedback"]), 1)
+            run("run", *options, "--resume")
+            self.assertEqual(rig.read_json(project / "state.json"), state)
+            preview = rig.read_json(out / "preview.json")
+            self.assertNotIn("pending_spend_usd", preview)
+            self.assertEqual(preview["spend_usd"], 0.03625)
+            self.assertEqual([c.args[0].removeprefix("/call/") for c in client.request.call_args_list],
+                             [LINKEDIN, X, PROFILE, COMPANY, WORK_EMAIL, WORK_EMAIL, VERIFY_EMAIL])
+            queue = rig.read_json(out / "queue.json")
+            self.assertEqual(rig.replay_decisions(out / "review.json", queue)[cards[0]["id"]]["decision"], "qualify")
             self.assertEqual(rig.read_json(out / "shortlist.json")["leads"][0]["work_email"], address)
 
     def test_email_requires_an_exact_work_address(self):

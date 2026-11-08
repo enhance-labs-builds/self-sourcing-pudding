@@ -83,6 +83,8 @@ def candidate_email(person, client, path, ledger, quotes):
 def enrich_candidates(cards, client, path, ledger, quotes):
     paused = False
     for row in cards:
+        if row.get("work_email", {}).get("status") == "verified":
+            continue
         if not row["role_matches"]:
             email = {"status": "outside_target_roles"}
         elif paused or quotes is None:

@@ -5,3 +5,7 @@ __pycache__/
 /brief.toml
 /runs/
 .DS_Store
+.env
+.env.*
+treg-config.json
+*.zip

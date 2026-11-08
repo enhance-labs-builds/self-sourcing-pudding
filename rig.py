@@ -493,7 +493,7 @@ def main(argv=None):
     live.add_argument("--profiles", type=int, choices=range(11), default=4, metavar="0–10",
                       help="maximum independent LinkedIn role lookups")
     live.add_argument("--dry-run", action="store_true", help="preview the queries and cap offline")
-    live.add_argument("--resume", action="store_true", help="reuse completed calls in the same run")
+    live.add_argument("--resume", action="store_true", help="reuse settled calls and recover any pending call in the same run")
     review = commands.add_parser("review", help="review a queue and export a shortlist")
     review.add_argument("--run", type=Path, required=True)
     review.add_argument("--decisions", type=Path, help="replay a review.json from the same queue")

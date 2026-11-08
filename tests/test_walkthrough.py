@@ -26,6 +26,12 @@ class WalkthroughTest(TestCase):
             shortlist = rig.read_json(out / "shortlist.json")
             review = rig.read_json(out / "review.json")
             state = rig.read_json(project / "state.json")
+            with patch("builtins.input", side_effect=["a"]):
+                rig.main(["walk", "--project", str(project), "--run", "example-pass-2"])
+            second = rig.read_json(project / "runs/example-pass-2/preview.json")
+            self.assertGreaterEqual(second["already_reviewed"], 2)
+            self.assertEqual(second["candidates"], 0)
+            self.assertEqual(rig.read_json(project / "state.json")["feedback"], state["feedback"])
         provider.assert_not_called()
         self.assertEqual(brief["signals"][0], "customer onboarding")
         self.assertEqual(preview["spend_usd"], 0)
@@ -36,3 +42,4 @@ class WalkthroughTest(TestCase):
         self.assertEqual({v["vote"] for v in state["feedback"].values()}, {"yay", "nay"})
         self.assertTrue(any(r["outcome"] == "held" and "Saved for follow-up" in r["reason"] for r in review["outcomes"]))
         self.assertIn("Profiles, posts and work emails below are fictional", console.getvalue())
+        self.assertIn("Run this URL again with your saved brief and feedback", console.getvalue())

@@ -5,7 +5,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from rig import build_queue, discovery_terms, match_terms, read_json
-from treg_adapter import LINKEDIN, PROFILE, WEB, X, Treg, bounded_call, journal, run_live
+from treg_adapter import LINKEDIN, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, PendingCall, Treg, billing, bounded_call, journal, run_live
 
 
 class TregSpendTest(TestCase):
@@ -164,16 +164,53 @@ class TregSpendTest(TestCase):
                 self.assertEqual(replay, first)
             self.assertEqual(client.request.call_count, 1)
 
-    def test_uncertain_call_preserves_reservation_and_blocks_resume(self):
+    def test_timeout_recovers_the_original_charge_and_blocks_unrelated_requests(self):
         client = Mock()
-        client.request.side_effect = ValueError("Connection dropped")
+        client.request.side_effect = [
+            ValueError("Connection dropped"),
+            (409, {"x-treg-cost-micro": "0"}, {}),
+            (200, {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true"}, {"ok": True}),
+            (200, {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true",
+                   "x-treg-original-cost-micro": "6400", "x-treg-call-id": "receipt"}, {"ok": True}),
+        ]
         with TemporaryDirectory() as root:
             out = Path(root) / "run"
             plan = {"budget_micro": 10_000}
-            with self.assertRaisesRegex(ValueError, "Connection dropped"):
-                with journal(out, plan, "demo-team", False) as (path, state):
-                    bounded_call(client, path, state, PROFILE, {"url": "a"}, 6400, dict)
-            with self.assertRaisesRegex(ValueError, "uncertain outcome"):
-                with journal(out, plan, "demo-team", True):
-                    self.fail("The outstanding charge should block paid calls")
-            self.assertEqual(client.request.call_count, 1)
+
+            def lookup(url="a", resume=True, caller="original"):
+                with journal(out, plan, "demo-team", resume, caller=caller) as (path, state):
+                    return bounded_call(client, path, state, PROFILE, {"url": url}, 6400, dict)
+
+            with self.assertRaisesRegex(PendingCall, "Connection dropped"):
+                lookup(resume=False)
+            with self.assertRaisesRegex(PendingCall, "different request"):
+                lookup("b")
+            with self.assertRaisesRegex(PendingCall, "original TREG_TOKEN"):
+                lookup(caller="rotated")
+            with self.assertRaisesRegex(PendingCall, "still processing"):
+                lookup()
+            with self.assertRaisesRegex(PendingCall, "without a settled receipt"):
+                lookup()
+            self.assertEqual(lookup(), {"ok": True})
+            self.assertEqual(lookup(), {"ok": True})
+            self.assertIsNone(lookup("b"))
+            self.assertEqual(billing(read_json(out / "treg-run.json")), 6400)
+            self.assertEqual(client.request.call_count, 4)
+            self.assertTrue(all(call == client.request.call_args_list[0] for call in client.request.call_args_list))
+
+    def test_expired_or_unretained_result_never_sends_another_call(self):
+        for reason in ("expired", "unretained"):
+            with self.subTest(reason=reason), TemporaryDirectory() as root:
+                client = Mock()
+                client.request.side_effect = (ValueError("Connection dropped") if reason == "expired"
+                                              else lambda *_: (410, {}, {"detail": {"call_id": "receipt"}}))
+                out = Path(root) / "run"
+                plan = {"budget_micro": 10_000}
+                with patch("treg_adapter.time", return_value=100), self.assertRaises(PendingCall):
+                    with journal(out, plan, "demo-team", False) as (path, state):
+                        bounded_call(client, path, state, PROFILE, {"url": "a"}, 6400, dict)
+                moment = 100 + (SAFE_REPLAY_SECONDS if reason == "expired" else 1)
+                with patch("treg_adapter.time", return_value=moment), self.assertRaisesRegex(PendingCall, "cannot safely replay"):
+                    with journal(out, plan, "demo-team", True) as (path, state):
+                        bounded_call(client, path, state, PROFILE, {"url": "a"}, 6400, dict)
+                self.assertEqual(client.request.call_count, 1)

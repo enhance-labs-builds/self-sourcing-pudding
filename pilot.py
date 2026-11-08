@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from treg_adapter import atomic_json, billing, linkedin_profile, linkedin_url, run_live
+from treg_adapter import atomic_json, billing, linkedin_profile, linkedin_url, pending_calls, run_live
 from url_seed import discover_seed
 
 
@@ -37,7 +37,7 @@ def setup_commands(commands):
                      help="results to examine per page on both channels")
     run.add_argument("--batch", action="store_true", help="use the approved full batch target")
     run.add_argument("--no-email", action="store_true", help="skip work email lookup and verification")
-    run.add_argument("--resume", action="store_true")
+    run.add_argument("--resume", action="store_true", help="continue the same live run and recover any pending call")
     run.add_argument("--corpus", type=Path, help="preview previously collected records offline")
     run.add_argument("--identities", type=Path, help="reviewed links between social authors and LinkedIn profiles")
     review = steps.add_parser("review", help="record yay or nay and remember the reason")
@@ -218,11 +218,22 @@ def run_preview(args, state, rig, *, example=None):
         raise ValueError("Approve the current brief before running a preview.")
     out = run_path(args.project, args.run)
     limit = brief["limits"]["batch_target"] if args.batch else 20
-    if out.exists() and (not args.resume or (out / "preview.json").exists() or args.corpus):
+    previous = rig.read_json(out / "preview.json") if (out / "preview.json").exists() else None
+    recovering_email = previous and previous["mode"] == "live" and previous.get("pending_spend_usd")
+    if out.exists() and (not args.resume or (previous and not recovering_email) or args.corpus or example is not None):
         raise ValueError("Choose a fresh run name. Resume is for interrupted live runs.")
+    if recovering_email and (previous["brief_version"] != version or args.no_email):
+        raise ValueError("Resume work email using the original approved brief and run options.")
     run_brief = {**brief, "limits": {**brief["limits"], "shortlist_size": limit}}
     identities = rig.read_json(args.identities) if args.identities else None
     prepared = None
+    previous_decisions = None
+    if recovering_email:
+        # A saved preview can already have votes. Refresh only its emails, never its candidate list.
+        queue = rig.read_json(out / "queue.json")
+        previous_cards = queue, rig.read_json(out / "holds.json")["candidates"], previous["already_reviewed"]
+        if (out / "review.json").exists():
+            previous_decisions = rig.replay_decisions(out / "review.json", queue)
 
     def prepare(corpus):
         if identities:
@@ -235,7 +246,7 @@ def run_preview(args, state, rig, *, example=None):
         from work_email import enrich_candidates
 
         nonlocal prepared
-        prepared = prepare(corpus)
+        prepared = previous_cards if recovering_email else prepare(corpus)
         enrich_candidates(prepared[0]["candidates"], client, path, ledger, quotes)
 
     if example is not None:
@@ -255,7 +266,7 @@ def run_preview(args, state, rig, *, example=None):
         ledger = rig.read_json(out / "treg-run.json")
         stats = {"mode": "live", "spend_usd": billing(ledger) / 1_000_000,
                  "channels": channel_status(ledger, treg_adapter)}
-        pending = sum(call["reserved_micro"] for call in ledger["calls"].values() if call["status"] == "pending")
+        pending = sum(call["reserved_micro"] for call in pending_calls(ledger).values())
         if pending:
             stats["pending_spend_usd"] = pending / 1_000_000
     queue, held, seen = prepared if prepared is not None else prepare(corpus)
@@ -277,7 +288,13 @@ def run_preview(args, state, rig, *, example=None):
     if prepared is not None:
         stats["verified_work_emails"] = sum(row["work_email"]["status"] == "verified" for row in cards)
         print(f"Verified work email: {stats['verified_work_emails']}/{len(cards)} candidates.")
+    if previous_decisions is not None:
+        rig.write_results(out, queue, previous_decisions)
     atomic_json(out / "preview.json", stats)
+    if stats.get("pending_spend_usd"):
+        print("Work email is still pending. You can review candidates now and resume this run later.")
+    if seen:
+        print(f"Skipped {seen} previously reviewed {'match' if seen == 1 else 'matches'}.")
     if example is not None:
         print(f"Example preview: {len(cards)} fictional candidates, {len(held)} held. Spend: US$0.")
     else:
@@ -371,7 +388,12 @@ def review(args, state, rig):
     if not state["approval"] or queue["brief_version"] != state["approval"]["version"]:
         raise ValueError("This preview belongs to a different approved brief. Run a new preview.")
     rows = {row["id"]: row for row in queue["candidates"]}
-    votes = rig.read_json(args.votes) if args.votes else interactive_votes(queue)
+    existing = out / "review.json"
+    saved = rig.replay_decisions(existing, queue) if existing.exists() else {}
+    unreviewed = [row for row in queue["candidates"] if row["id"] not in saved]
+    if not args.votes and not unreviewed:
+        print("No new candidates to review.")
+    votes = rig.read_json(args.votes) if args.votes else interactive_votes({**queue, "candidates": unreviewed})
     decisions = {}
     updates = {}
     for key, vote in votes.items():
@@ -399,9 +421,7 @@ def review(args, state, rig):
                           "seen_sources": sources, "run": args.run, "brief_version": queue["brief_version"],
                           "role": row["person"]["role"], "company": row["person"]["company"], "updated_at": utc_now()}
         decisions[key] = decision
-    existing = out / "review.json"
-    if existing.exists():
-        decisions = {**rig.replay_decisions(existing, queue), **decisions}
+    decisions = {**saved, **decisions}
     rig.write_results(out, queue, decisions)
     state["feedback"].update(updates)
     atomic_json(args.project / "state.json", state)

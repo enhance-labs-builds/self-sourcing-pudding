@@ -4,13 +4,14 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from argparse import Namespace
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
 import pilot
-from treg_adapter import dollars, micro_dollars
+from treg_adapter import PendingCall, dollars, micro_dollars
 from url_seed import profile_channel, public_url
 
 
@@ -86,6 +87,16 @@ def review_brief(project, state, rig):
             return True
 
 
+def walk_command(project, name, budget):
+    root = Path(__file__).resolve().parent
+    installed = root / ".pudding/bin/pudding"
+    command = [str(installed)] if installed.is_file() else [sys.executable, str(root / "rig.py")]
+    command += ["walk", "--project", str(project.resolve()), "--run", name]
+    if budget:
+        command += ["--live", "--budget-usd", budget]
+    return shlex.join(command)
+
+
 def run(args, rig):
     if args.live and not args.budget_usd:
         raise ValueError("Give the live preview a cap with --budget-usd.")
@@ -95,6 +106,7 @@ def run(args, rig):
     mode = "live" if args.live else "example"
     name = args.run or f"{mode}-preview"
     project = args.project or Path("runs") / f"pudding-{uuid4().hex[:8]}"
+    continue_command = walk_command(project, name, budget)
     print("\nSelf-Sourcing Pudding")
     print(f"Live preview · LinkedIn, X and work email · maximum US${budget}" if args.live
           else "Example preview · public site for the brief · fictional candidates · US$0")
@@ -110,20 +122,41 @@ def run(args, rig):
 
     with pilot.locked_project(project, rig) as state:
         out = pilot.run_path(project, name)
-        if (out / "preview.json").exists() and rig.read_json(out / "preview.json")["mode"] != mode:
+        summary_path = out / "preview.json"
+        summary = rig.read_json(summary_path) if summary_path.exists() else None
+        if summary and summary["mode"] != mode:
             raise ValueError("Choose a different --run name when switching between example and live previews.")
-        if not (out / "preview.json").exists():
+        if not out.exists():
             print("\n1. Review your sourcing brief")
             if not review_brief(project, state, rig):
-                print(f"Draft saved. Continue with pudding walk --project {shlex.quote(str(project))}." if not args.live
-                      else f"Draft saved. Continue with pudding walk --live --budget-usd {budget} --project {shlex.quote(str(project))}.")
+                print(f"Draft saved. Continue with:\n  {continue_command}")
                 return
-            print("\n2. Build the preview")
+        if not summary or summary.get("pending_spend_usd"):
+            if out.exists() and not args.live:
+                raise ValueError("This run name already exists. Choose a fresh --run name.")
+            if out.exists() and not (out / "treg-run.json").exists():
+                raise ValueError("This run has no Treg record to resume. Choose a fresh --run name.")
+            print("\n2. Resume the preview" if out.exists() else "\n2. Build the preview")
+            if args.live:
+                print(f"If the run is interrupted, continue with:\n  {continue_command}", flush=True)
             preview = Namespace(project=project, run=name, budget_usd=budget, corpus=None, identities=None,
                                 batch=False, resume=out.exists(), searches=None, profiles=None, pages=1,
                                 results_per_search=None, no_email=False)
             example = None if args.live else example_corpus(rig.read_brief(project / "brief.toml"))
-            pilot.run_preview(preview, state, rig, example=example)
+            try:
+                pilot.run_preview(preview, state, rig, example=example)
+            except PendingCall:
+                print(f"Resume this run with:\n  {continue_command}", flush=True)
+                raise
+            summary = rig.read_json(summary_path)
         print("\n3. Review candidates")
         pilot.review(Namespace(project=project, run=name, votes=None), state, rig)
         print(f"\nYour shortlist is ready at {out.resolve() / 'shortlist.csv'}")
+        if summary.get("pending_spend_usd"):
+            print(f"Resume the pending work email in this run with:\n  {continue_command}")
+        else:
+            next_index = 2
+            while pilot.run_path(project, f"{mode}-pass-{next_index}").exists():
+                next_index += 1
+            next_command = walk_command(project, f"{mode}-pass-{next_index}", budget)
+            print(f"Run this URL again with your saved brief and feedback:\n  {next_command}")

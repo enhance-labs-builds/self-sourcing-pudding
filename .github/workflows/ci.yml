@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: python3 -m unittest discover -s tests
+      - run: |
+          python3 package_tester.py "$RUNNER_TEMP/self-sourcing-pudding-tester.zip"
+          unzip -t "$RUNNER_TEMP/self-sourcing-pudding-tester.zip"

@@ -36,7 +36,8 @@ def setup_commands(commands):
     run.add_argument("--results-per-search", type=int, choices=range(1, 51), metavar="1–50",
                      help="results to examine per page on both channels")
     run.add_argument("--batch", action="store_true", help="use the approved full batch target")
-    run.add_argument("--spider", action="store_true", help="follow promising posts and one employer search")
+    run.add_argument("--target", type=int, metavar="1–500", help="maximum people to review in this run")
+    run.add_argument("--spider", action="store_true", help="follow threads and search relevant employers")
     run.add_argument("--no-email", action="store_true", help="skip work email lookup and verification")
     run.add_argument("--resume", action="store_true", help="continue the same live run and recover any pending call")
     run.add_argument("--corpus", type=Path, help="preview previously collected records offline")
@@ -189,12 +190,7 @@ def select_preview(queue, feedback, limit, rig, *, example=False):
             row = {**row, "hold": "The author has no verified LinkedIn profile."}
         (held if rig.candidate_hold(row) else known).append(row)
     # Keep the person with attributable, current evidence ahead of a name needing research.
-    known.sort(key=lambda row: (
-        bool(row["role_matches"]),
-        any(FIRSTHAND.search(source["text"]) for source in row["sources"] if not source["hold"]),
-        bool(row["person"].get("employer_signal")),
-        max(source["published_on"] for source in row["sources"] if not source["hold"]),
-    ), reverse=True)
+    known.sort(key=rig.candidate_priority, reverse=True)
     return known[:limit], held, seen
 
 
@@ -222,12 +218,15 @@ def run_preview(args, state, rig, *, example=None):
     if not state["approval"] or state["approval"]["version"] != version:
         raise ValueError("Approve the current brief before running a preview.")
     out = run_path(args.project, args.run)
-    limit = brief["limits"]["batch_target"] if args.batch else 20
+    target = getattr(args, "target", None)
+    if target is not None and (args.batch or not 1 <= target <= 500):
+        raise ValueError("Use --target from 1 to 500 without --batch.")
+    limit = target if target is not None else brief["limits"]["batch_target"] if args.batch else 20
     previous = rig.read_json(out / "preview.json") if (out / "preview.json").exists() else None
     recovering_email = previous and previous["mode"] == "live" and previous.get("pending_spend_usd")
     if out.exists() and (not args.resume or (previous and not recovering_email) or args.corpus or example is not None):
         raise ValueError("Choose a fresh run name. Resume is for interrupted live runs.")
-    if recovering_email and (previous["brief_version"] != version or args.no_email):
+    if recovering_email and (previous["brief_version"] != version or previous["max_candidates"] != limit or args.no_email):
         raise ValueError("Resume work email using the original approved brief and run options.")
     run_brief = {**brief, "limits": {**brief["limits"], "shortlist_size": limit}}
     identities = rig.read_json(args.identities) if args.identities else None

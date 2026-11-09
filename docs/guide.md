@@ -33,11 +33,11 @@ python3 rig.py pilot status --project runs/boat
 
 `start` reads the site's public copy, social links and comparison links. It proposes roles and search phrases when the copy supports a starting hypothesis. For other sites, fill in the buyer and workflow in `brief.toml`. Use `--starter` to import a researched brief, or `--website` when your starting LinkedIn or X URL needs a public company site. Review or edit the draft before approval. Any later edit to the brief's settings needs a new approval.
 
-The preview shows up to 20 people with a current LinkedIn role and dated source. `holds.json` contains candidates with an identity or freshness gap. To include an X author in the preview, supply a reviewed identity match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
+The preview defaults to at most 20 people with a current LinkedIn role and dated source. Use `--target` to choose your own review limit. `holds.json` contains candidates with an identity or freshness gap. Follow-up search can resolve some X authors automatically. You can also supply a reviewed match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
 
-Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. `pilot run --batch` uses `limits.batch_target` from the approved brief, starting at 100. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The approved target and spend cap bound the run. The pilot is run on demand.
+Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. For a recurring batch size, set `limits.batch_target` in the brief and use `pilot run --batch`. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The target and spend limit are ceilings. The pilot is run on demand.
 
-Live pilot runs also look up work emails for review candidates whose current roles match the brief. The rig checks the website listed on the person's current LinkedIn company page, then independently verifies any address that matches that domain. Review shows verified emails as soon as the run finishes and carries them into the shortlist. The same spend cap covers discovery, role checks, and email. Use `--no-email` to spend the cap on discovery and role checks alone. For a reviewed X identity, include the current employer's LinkedIn `company_url` in `--identities` to make it eligible for email lookup. Keep run folders private.
+Live pilot runs look up work emails for review candidates whose current roles match the brief. With follow-up search enabled, people with strong firsthand evidence are also eligible. Pudding checks the website listed on the person's current LinkedIn company page, then independently verifies any address that matches that domain. Review shows verified emails as soon as the run finishes and carries them into the shortlist. The same spend limit covers discovery, role checks, and email. Use `--no-email` to spend it on discovery and role checks alone. For a reviewed X identity, include the current employer's LinkedIn `company_url` in `--identities` to make it eligible for email lookup. Keep run folders private.
 
 ### Draft a brief with a browsing-enabled agent
 
@@ -87,10 +87,10 @@ printf '\n'
 export TREG_TOKEN
 ```
 
-From the repository folder, start a live search with your walkthrough project. Replace `YOUR_LIMIT` with the most you want this run to use in US dollars. Searches, role checks, and work email lookup share that budget.
+From the repository folder, start a live search with your walkthrough project. Pudding asks how much to spend before it runs paid searches. You can also supply `--budget-usd` up front. Use `--target` to pick the maximum number of people to review.
 
 ```sh
-.pudding/bin/pudding walk --project runs/my-company --live --budget-usd YOUR_LIMIT
+.pudding/bin/pudding walk --project runs/my-company --live
 ```
 
 To run the example brief directly from the command line, use the following commands:
@@ -111,15 +111,15 @@ Self-Sourcing Pudding is an independent client of Treg. Treg provides the upstre
 
 ### Follow posts and employers
 
-Add `--spider` to `walk --live`, `pilot run`, or `live` to follow promising results one step further.
+The live walkthrough follows promising threads and employers by default. Use `--no-spider` to run the initial search alone. With `pilot run` or `live`, add `--spider` to include follow-up searches.
 
 ```sh
-.pudding/bin/pudding walk --project runs/my-company --live --spider --budget-usd YOUR_LIMIT
+.pudding/bin/pudding walk --project runs/my-company --live --target 12
 ```
 
-Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. When a seed author has a verified current role that fits your brief and describes doing the work, Pudding also searches for relevant LinkedIn posts by people at that employer. It adds the results to the same review queue and keeps the link that led to each source.
+Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. It checks promising authors' current roles. When an author or commenter describes doing the work and has a confirmed employer, Pudding can search LinkedIn for coworkers posting about the same workflow. It follows up to two employers and keeps the link to the post or comment that led there.
 
-A verified connection to that team can move someone up for review. The shortlist still needs current evidence from that person's own words. X authors with unresolved identities stay on hold. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Keep `--spider` on the continuation command if a run is interrupted.
+A verified connection to that team can move someone up for review. The shortlist still needs current evidence from that person's own words. For a few promising X authors, Pudding checks whether their public profile links directly to LinkedIn, then compares the names and verifies the LinkedIn role. Unresolved identities stay on hold. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Use the printed continuation command after an interruption.
 
 #### Include X quote posts
 

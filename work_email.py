@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlsplit
 
 from treg_adapter import (COMPANY, EMAIL_ENDPOINTS, PER_CALL, VERIFY_EMAIL, WORK_EMAIL, billing, bounded_call,
-                          call_key, linkedin_profile, linkedin_url)
+                          call_key, evidence_priority, linkedin_profile, linkedin_url)
 from url_seed import public_url
 
 
@@ -85,7 +85,11 @@ def enrich_candidates(cards, client, path, ledger, quotes):
     for row in cards:
         if row.get("work_email", {}).get("status") == "verified":
             continue
-        if not row["role_matches"]:
+        firsthand = ledger["plan"].get("evidence_spider") and any(
+            evidence_priority(source["text"], source["matches"]) == 2
+            for source in row["sources"] if not source["hold"]
+        )
+        if not row["role_matches"] and not firsthand:
             email = {"status": "outside_target_roles"}
         elif paused or quotes is None:
             email = {"status": "provider_unavailable"}

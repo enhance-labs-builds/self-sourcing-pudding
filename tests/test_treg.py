@@ -9,7 +9,7 @@ import rig
 from pilot import channel_status, select_preview
 from rig import build_queue, discovery_terms, match_terms, read_json
 import treg_adapter
-from treg_adapter import (LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_QUOTES, X_REPLIES,
+from treg_adapter import (LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_PROFILE, X_QUOTES, X_REPLIES,
                           PendingCall, Treg, billing, bounded_call, journal, run_live)
 
 
@@ -25,7 +25,7 @@ class TregSpendTest(TestCase):
         role = "Platform Engineer"
         first_person = "We built ephemeral stacks for our app team."
         workflow_phrase = "ephemeral environment"
-        prices = {LINKEDIN: 4_000, X: 750, PROFILE: 6_400, LINKEDIN_COMMENTS: 4_000, X_REPLIES: 500,
+        prices = {LINKEDIN: 4_000, X: 750, PROFILE: 6_400, LINKEDIN_COMMENTS: 4_000, X_REPLIES: 500, X_PROFILE: 220,
                   X_QUOTES: 5_000}
         client = Mock()
         client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
@@ -39,12 +39,15 @@ class TregSpendTest(TestCase):
                        else f"{first_person} It uses an {workflow_phrase}.")
             if name == "reassigned":
                 content = "This is a public roundup of ephemeral stacks and preview deploy tools."
+            if name == "seed":
+                content = f"Discussion of ephemeral stacks and how to run a preview deploy in an {workflow_phrase}."
             return {"linkedinUrl": f"https://www.linkedin.com/posts/fixture-{name}", "content": content,
                     "postedAt": {"date": now.isoformat()},
                     "author": {"name": name, "linkedinUrl": profiles[name], "info": role}}
 
         def comment(name, identifier):
-            return {"linkedinUrl": f"{seed_url}?commentUrn={identifier}", "commentary": "Same here.",
+            text = f"{first_person} It uses an {workflow_phrase}." if name == "coworker" else "Same here."
+            return {"linkedinUrl": f"{seed_url}?commentUrn={identifier}", "commentary": text,
                     "createdAt": now.isoformat(),
                     "actor": {"name": name, "linkedinUrl": profiles[name], "position": role}}
 
@@ -89,12 +92,19 @@ class TregSpendTest(TestCase):
                     {"id": "104", "author_id": "789", "text": "A different quote.", "created_at": now.isoformat(),
                      "referenced_tweets": [{"type": "quoted", "id": "999"}]},
                 ]}
+            if endpoint == X_PROFILE:
+                handle = params["handle"]
+                name = "Coworker Example" if handle == "fixture" else "Someone Else"
+                profile = profiles["coworker" if handle == "fixture" else "outsider"]
+                return 200, paid, {"output": {"found": True, "data": {
+                    "handle": handle, "website": profile, "displayName": name,
+                }}}
             self.assertEqual(endpoint, PROFILE)
             name = next(name for name, url in profiles.items() if url == params["url"])
             current_company = other_company if name in {"outsider", "wrong-company", "reassigned"} else company
             return 200, paid, {"element": {
                 "linkedinUrl": params["url"], "firstName": name, "lastName": "Example",
-                "currentPosition": [{"position": role, "companyName": "Fixture Company",
+                "currentPosition": [{"position": "Systems Lead" if name == "coworker" else role, "companyName": "Fixture Company",
                                      "companyLinkedinUrl": current_company}],
             }}
 
@@ -131,8 +141,8 @@ workflow = ["{workflow_phrase}"]
         self.assertEqual(endpoints.count(X_QUOTES), 1)
         self.assertEqual(endpoints.count(LINKEDIN), 2)
         self.assertEqual(endpoints.count(PROFILE), 6)
-        self.assertEqual(next(params["url"] for endpoint, params, _ in requests if endpoint == PROFILE), profiles["seed"])
-        self.assertEqual(billing(ledger), 56_650)
+        self.assertEqual(next(params["url"] for endpoint, params, _ in requests if endpoint == PROFILE), profiles["coworker"])
+        self.assertEqual(billing(ledger), 57_310)
         self.assertEqual(channel_status(ledger, treg_adapter)["linkedin"]["status"], "complete")
         sources = {source["url"]: source for source in corpus["observations"]}
         self.assertEqual(len(sources), 10)
@@ -140,6 +150,9 @@ workflow = ["{workflow_phrase}"]
         self.assertNotIn("https://x.com/ALREADY/status/101", sources)
         self.assertNotIn("https://x.com/i/web/status/104", sources)
         self.assertEqual(sources["https://x.com/already/status/101"]["kind"], "reply")
+        self.assertNotIn("person_id", sources["https://x.com/already/status/101"])
+        self.assertEqual(sources[seed_x]["person_id"], sources[f"{seed_url}?commentUrn=2"]["person_id"])
+        self.assertEqual(sources[seed_x]["binding_source"], "https://x.com/fixture")
         self.assertEqual(sources["https://x.com/i/web/status/103"]["kind"], "quote")
         self.assertEqual([item["lane"] for item in sources["https://www.linkedin.com/posts/fixture-reassigned"]["found_by"]],
                          ["problem"])
@@ -148,10 +161,13 @@ workflow = ["{workflow_phrase}"]
             self.assertEqual(sources[child]["parent_id"], sources[parent]["id"])
             self.assertEqual(sources[child]["found_by"][-1]["seed_url"], parent)
         self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["lane"], "employer")
+        self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["seed_url"],
+                         f"{seed_url}?commentUrn=2")
         cards, held, _ = select_preview(queue, {}, 20, rig)
         names = [row["person"]["name"] for row in cards]
         teammate = next(row for row in cards if row["person"]["name"] == "teammate Example")
         self.assertEqual(len(teammate["sources"]), 2)
+        self.assertEqual(names[0], "coworker Example")
         self.assertLess(names.index("coworker Example"), names.index("outsider Example"))
         self.assertTrue(any(source["url"] == "https://x.com/newperson/status/102"
                             for row in held for source in row["sources"]))

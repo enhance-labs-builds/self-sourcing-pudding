@@ -44,9 +44,9 @@ Clone the repo as above and run `python3 rig.py demo` from the repository folder
 
 Run a live search whenever you want fresh leads. Pudding uses Treg for searches, role checks, and work email lookup. [Treg](https://treg.to/) offers **US$1 in starter credit** once per new verified account, with no card required. Usage draws from your Treg balance. [Set up Treg and run a live search](docs/guide.md#run-a-live-search).
 
-Each preview brings back up to 20 people for review. X authors are eligible for the shortlist once you match them to a verified LinkedIn profile. Live runs can add verified work emails when available.
+Pudding starts with public posts about the workflow or a competitor in your brief. It reads the replies and comments, checks who wrote them and where they work, then looks for colleagues posting about the same work. A short reply from someone on a team already doing the work can move up for review. Shortlisting still takes evidence from that person. [How Pudding follows posts and employers](docs/guide.md#follow-posts-and-employers)
 
-To look beyond the first results, use [follow-up search](docs/guide.md#follow-posts-and-employers). Pudding reads LinkedIn comments and X replies on promising posts and searches for other people posting about the work at a verified employer. Add a [read-only X connection in Treg](docs/guide.md#include-x-quote-posts) to include quote posts.
+Choose the most you want to spend and use `--target` to set how many people you want to review. You may get fewer when the evidence is thin. Pudding can include verified work emails when available.
 
 After your first live review, open `runs/my-company/runs/live-preview/shortlist.csv`. Pudding prints a command for another pass with the same brief and votes. The next pass skips people whose evidence you’ve already reviewed.
 

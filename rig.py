@@ -54,6 +54,24 @@ def read_brief(path):
         brief[key] = nonempty(brief.get(key), key)
     for key in ("target_roles", "signals", "alternatives", "exclusions"):
         brief[key] = values(brief.get(key, []), key, key in {"target_roles", "signals"})
+    if "company_signals" in brief:
+        brief["company_signals"] = values(brief["company_signals"], "company_signals", required=False)
+    if brief.get("derive_searches") is True and "searches" not in brief:
+        signals = brief["signals"]
+        comparisons = brief.get("comparison_sources", {})
+        if not isinstance(comparisons, dict):
+            raise ValueError("Use a [comparison_sources] table with URLs by competitor.")
+        problem_searches = [{"lane": "problem", "phrase": phrase} for phrase in signals]
+        signal_names = {phrase.casefold() for phrase in signals}
+        alternatives = []
+        for name in brief["alternatives"]:
+            if name.casefold() in signal_names:
+                continue
+            search = {"lane": "alternative", "phrase": name, "workflow": signals[:3]}
+            if name in comparisons:
+                search["seed_url"] = comparisons[name]
+            alternatives.append(search)
+        brief["searches"] = problem_searches[:2] + alternatives + problem_searches[2:]
     if "searches" in brief:
         searches = brief["searches"]
         if not isinstance(searches, list) or not searches:
@@ -171,6 +189,8 @@ def show_plan(brief):
     print(f"Prioritize roles: {', '.join(brief['target_roles'])}")
     print(f"Search signals: {', '.join(brief['signals'])}")
     print(f"Alternatives: {', '.join(brief['alternatives']) or '(none)'}")
+    if brief.get("company_signals"):
+        print(f"Company fit: {', '.join(brief['company_signals'])}")
     if "searches" in brief:
         print("Live queries for LinkedIn and X, in priority order:")
         for search in brief["searches"]:
@@ -317,7 +337,8 @@ def candidate_hold(candidate):
 def candidate_priority(candidate):
     sources = [source for source in candidate["sources"] if not source["hold"]]
     evidence = [evidence_priority(source["text"], source["matches"]) for source in sources]
-    employer = bool((candidate["person"] or {}).get("employer_signal"))
+    person = candidate["person"] or {}
+    employer = bool(person.get("employer_signal") or person.get("company_fit"))
     return (max(max(evidence, default=0), int(employer)), evidence.count(2), employer, bool(candidate["role_matches"]),
             sum(score > 0 for score in evidence), max((source["published_on"] for source in sources), default=""))
 

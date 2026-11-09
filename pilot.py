@@ -51,7 +51,7 @@ def setup_commands(commands):
     return steps
 
 
-def draft(seed, target):
+def draft(seed, target, *, ask=None):
     description = seed["description"]
     host = urlsplit(seed["website"]).hostname
     data = {
@@ -61,33 +61,40 @@ def draft(seed, target):
         "target_roles": ["Choose who owns this workflow"],
         "signals": [host],
         "alternatives": list(seed.get("comparisons", {})),
+        "company_signals": [],
+        "derive_searches": True,
         "exclusions": ["Vendor announcements without firsthand evidence"],
         "qualifies": "The person describes doing, operating, or evaluating the workflow for their team.",
         "more_like": "A practitioner describes their team's work and a concrete constraint.",
         "less_like": "Someone repeats a product announcement without describing their own work.",
     }
     text = f"{seed['title']} {description} {seed.get('headings', '')}".lower()
-    workflow = []
     if "agent" in text and ("sandbox" in text or re.search(r"\bvms?\b", text)):
         data["problem"] = "Teams running AI agents need isolated execution with the tooling and persistence their workloads require."
         data["target_roles"] = ["Platform Engineer", "Infrastructure Engineer", "Engineering Lead", "CTO", "Founder"]
         data["signals"] = ["agent sandbox", "sandbox infrastructure", "persistent sandbox", "AI agents"]
-        workflow = ["sandbox", "coding agent", "code execution"]
     elif ("onboarding" in text or "implementation" in text) and ("customer" in text or "user" in text):
         data["problem"] = "Customer teams need to guide new users through setup and adoption without a live call for every account."
         data["target_roles"] = ["Head of Customer Success", "Director of Customer Success", "Customer Onboarding Lead", "Implementation Manager", "Product Growth Lead"]
         data["signals"] = ["customer onboarding", "guided onboarding", "onboarding calls", "time to value"]
         data["qualifies"] = "The person owns customer onboarding or adoption and describes a bottleneck, an experiment, or a rollout their team is working on."
-        workflow = ["customer onboarding", "activation", "guided setup"]
+    elif ask:
+        print(f"\n{seed['title']}\n{description}\n{seed['website']}")
+        print("Use what you know about the people who do this work to finish the brief.")
+        data["problem"] = ask("What problem or workflow should we look for?", required=True)
+        data["target_roles"] = ask("Who does or owns that work? Separate roles with commas.", required=True, split=True)
+        data["signals"] = ask("What phrases would they use in a post? Separate them with commas.", required=True, split=True)
+        alternatives = ask("Any competitors or workarounds to search? Separate them with commas.", split=True)
+        data["alternatives"] = list(dict.fromkeys(data["alternatives"] + alternatives))
+        data["company_signals"] = ask("What kinds of companies should move up for review? Enter phrases or leave blank.",
+                                      split=True)
     lines = ["# Roles, problem and search terms are hypotheses. Edit them before approval.",
+             "# Use company_signals for phrases you would expect to see on a relevant employer’s public profile.",
              *[f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in data.items()]]
-    if workflow:
-        for term in data["signals"][:2]:
-            lines.extend(("", "[[searches]]", 'lane = "problem"', f'phrase = "{term}"'))
-        for competitor in data["alternatives"][:3]:
-            lines.extend(("", "[[searches]]", 'lane = "alternative"', f'phrase = "{competitor}"',
-                          f"workflow = {json.dumps(workflow)}",
-                          f'seed_url = "{seed["comparisons"][competitor]}"'))
+    if seed.get("comparisons"):
+        lines.extend(("", "[comparison_sources]"))
+        for competitor, source in seed["comparisons"].items():
+            lines.append(f"{json.dumps(competitor, ensure_ascii=False)} = {json.dumps(source)}")
     lines.extend(("", "[limits]", "source_age_days = 45", "role_age_days = 30",
                   "shortlist_size = 20", f"batch_target = {target}"))
     return "\n".join(lines) + "\n"
@@ -106,7 +113,7 @@ def start_project(args, rig, *, seed=None, show=True):
             body = re.sub(r"(?m)^\[limits\]\s*$", f"[limits]\nbatch_target = {args.target}", body, count=1)
         body = re.sub(r"(?m)^shortlist_size\s*=.*$", "shortlist_size = 20", body, count=1)
     else:
-        body = draft(seed, args.target)
+        body = draft(seed, args.target, ask=getattr(args, "ask", None))
     args.project.mkdir(mode=0o700, parents=True)
     (args.project / ".gitignore").write_text("*\n", encoding="utf-8")
     (args.project / "runs").mkdir()
@@ -353,6 +360,9 @@ def interactive_votes(queue):
               else f"\n{row['sources'][0]['author']}")
         if person and person.get("employer_signal"):
             print(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}")
+        if person and (fit := person.get("company_fit")):
+            excerpt = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", fit["excerpt"][:400])
+            print(f"  Company fit · {excerpt}\n  {fit['source_url']}")
         if row.get("work_email", {}).get("status") == "verified":
             print(f"Verified work email: {row['work_email']['address']}")
         elif row.get("work_email", {}).get("status") == "example":

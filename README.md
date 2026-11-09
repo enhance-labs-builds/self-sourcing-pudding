@@ -32,7 +32,7 @@ cd self-sourcing-pudding
 bash install.sh --project runs/my-company
 ```
 
-Paste your company URL when prompted. If the draft needs work, edit who owns the problem and add phrases they’d use in a post. After the review, Pudding prints the command for another pass with the same brief and votes.
+Paste your company URL when prompted. When the site leaves gaps, Pudding asks who owns the work, how they talk about it, and which companies or alternatives matter. Review the queries before approving. After the review, Pudding prints the command for another pass with the same brief and votes.
 
 You can also [download the tester ZIP](https://github.com/enhance-labs-builds/self-sourcing-pudding/releases/download/v0.1.0/self-sourcing-pudding-tester.zip), unzip it, and open `START HERE.txt`.
 
@@ -44,7 +44,7 @@ Clone the repo as above and run `python3 rig.py demo` from the repository folder
 
 Run a live search whenever you want fresh leads. Pudding uses Treg for searches, role checks, and work email lookup. [Treg](https://treg.to/) offers **US$1 in starter credit** once per new verified account, with no card required. Usage draws from your Treg balance. [Set up Treg and run a live search](docs/guide.md#run-a-live-search).
 
-Pudding starts with public posts about the workflow or a competitor in your brief. It reads the replies and comments, checks who wrote them and where they work, then looks for colleagues posting about the same work. A short reply from someone on a team already doing the work can move up for review. Shortlisting still takes evidence from that person. [How Pudding follows posts and employers](docs/guide.md#follow-posts-and-employers)
+Pudding starts with public posts about the workflow or a competitor in your brief. It reads replies and comments, checks who wrote them, and follows up at an employer when a post connects the work to that company. A short reply can move up for review when the person's company fits your brief. Shortlisting still takes evidence from that person. [How Pudding follows posts and employers](docs/guide.md#follow-posts-and-employers)
 
 Choose the most you want to spend and use `--target` to set how many people you want to review. You may get fewer when the evidence is thin. Pudding can include verified work emails when available.
 

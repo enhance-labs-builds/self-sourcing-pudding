@@ -9,8 +9,9 @@ import rig
 from pilot import channel_status, select_preview
 from rig import build_queue, discovery_terms, match_terms, read_json
 import treg_adapter
-from treg_adapter import (LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_PROFILE, X_QUOTES, X_REPLIES,
-                          PendingCall, Treg, billing, bounded_call, journal, run_live)
+from treg_adapter import (COMPANY, LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_PROFILE,
+                          X_QUOTES, X_REPLIES, PendingCall, Treg, billing, bounded_call, employer_scope, journal,
+                          run_live)
 
 
 class TregSpendTest(TestCase):
@@ -26,7 +27,7 @@ class TregSpendTest(TestCase):
         first_person = "We built ephemeral stacks for our app team."
         workflow_phrase = "ephemeral environment"
         prices = {LINKEDIN: 4_000, X: 750, PROFILE: 6_400, LINKEDIN_COMMENTS: 4_000, X_REPLIES: 500, X_PROFILE: 220,
-                  X_QUOTES: 5_000}
+                  X_QUOTES: 5_000, COMPANY: 4_000}
         client = Mock()
         client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
         client.preflight.side_effect = lambda endpoints, include_x_quotes=False: {
@@ -46,7 +47,8 @@ class TregSpendTest(TestCase):
                     "author": {"name": name, "linkedinUrl": profiles[name], "info": role}}
 
         def comment(name, identifier):
-            text = f"{first_person} It uses an {workflow_phrase}." if name == "coworker" else "Same here."
+            text = (f"At Fixture Company, we built ephemeral stacks using an {workflow_phrase}."
+                    if name == "coworker" else "Same here.")
             return {"linkedinUrl": f"{seed_url}?commentUrn={identifier}", "commentary": text,
                     "createdAt": now.isoformat(),
                     "actor": {"name": name, "linkedinUrl": profiles[name], "position": role}}
@@ -99,6 +101,10 @@ class TregSpendTest(TestCase):
                 return 200, paid, {"output": {"found": True, "data": {
                     "handle": handle, "website": profile, "displayName": name,
                 }}}
+            if endpoint == COMPANY:
+                org_url = params["url"]
+                description = "We build regulated software for clinics." if org_url == other_company else "Developer tools."
+                return 200, paid, {"element": {"linkedinUrl": org_url, "description": description}}
             self.assertEqual(endpoint, PROFILE)
             name = next(name for name, url in profiles.items() if url == params["url"])
             current_company = other_company if name in {"outsider", "wrong-company", "reassigned"} else company
@@ -113,7 +119,8 @@ class TregSpendTest(TestCase):
                 patch("treg_adapter.Treg", return_value=client):
             out = Path(folder) / "run"
             brief_path = Path(folder) / "brief.toml"
-            brief_path.write_text((rig.EXAMPLE / "brief.toml").read_text() + f"""
+            template = (rig.EXAMPLE / "brief.toml").read_text()
+            brief_path.write_text('company_signals = ["regulated software"]\n' + template + f"""
 
 [[searches]]
 lane = "problem"
@@ -142,7 +149,8 @@ workflow = ["{workflow_phrase}"]
         self.assertEqual(endpoints.count(LINKEDIN), 2)
         self.assertEqual(endpoints.count(PROFILE), 6)
         self.assertEqual(next(params["url"] for endpoint, params, _ in requests if endpoint == PROFILE), profiles["coworker"])
-        self.assertEqual(billing(ledger), 57_310)
+        self.assertEqual(billing(ledger), 65_310)
+        self.assertEqual(endpoints.count(COMPANY), 2)
         self.assertEqual(channel_status(ledger, treg_adapter)["linkedin"]["status"], "complete")
         sources = {source["url"]: source for source in corpus["observations"]}
         self.assertEqual(len(sources), 10)
@@ -163,12 +171,21 @@ workflow = ["{workflow_phrase}"]
         self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["lane"], "employer")
         self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["seed_url"],
                          f"{seed_url}?commentUrn=2")
+        self.assertIn("At Fixture Company", sources["https://www.linkedin.com/posts/fixture-teammate"]
+                      ["found_by"][0]["scope_excerpt"])
+        self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["root_url"], seed_url)
         cards, held, _ = select_preview(queue, {}, 20, rig)
         names = [row["person"]["name"] for row in cards]
         teammate = next(row for row in cards if row["person"]["name"] == "teammate Example")
         self.assertEqual(len(teammate["sources"]), 2)
         self.assertEqual(names[0], "coworker Example")
         self.assertLess(names.index("coworker Example"), names.index("outsider Example"))
+        outsider = next(row["person"] for row in cards if row["person"]["name"] == "outsider Example")
+        self.assertNotIn("employer_signal", outsider)
+        self.assertEqual(outsider["company_fit"], {
+            "source_url": other_company, "excerpt": "We build regulated software for clinics.",
+            "signals": ["regulated software"],
+        })
         self.assertTrue(any(source["url"] == "https://x.com/newperson/status/102"
                             for row in held for source in row["sources"]))
         with self.assertRaisesRegex(ValueError, "attributed to this person"):
@@ -176,6 +193,18 @@ workflow = ["{workflow_phrase}"]
                 "decision": "qualify", "reason": "test", "evidence_kind": "explicit_work",
                 "source_id": sources[seed_url]["id"], "excerpt": first_person,
             }})
+
+    def test_employer_pivot_needs_work_at_the_verified_employer(self):
+        def scope(text):
+            return employer_scope(text, "Fixture Company", ["preview deploy"], match_terms)
+
+        self.assertEqual(scope("At Fixture Company we built a preview deploy."), "At Fixture Company we built a preview deploy.")
+        for text in ("We built a preview deploy.", "At Former Company we built a preview deploy.",
+                     "At Fixture Company Labs we built a preview deploy.",
+                     "At Fixture Company we built a preview deploy for a client.",
+                     "At Fixture Company we built a preview deploy as a side project."):
+            with self.subTest(text=text):
+                self.assertIsNone(scope(text))
 
     def test_spider_skips_followups_when_the_budget_cannot_cover_them(self):
         now = datetime.now(timezone.utc)

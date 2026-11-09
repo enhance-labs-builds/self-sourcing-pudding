@@ -500,6 +500,19 @@ def workflow_signals(brief):
     ]))
 
 
+def employer_scope(text, company, workflow, match_terms):
+    outside_work = (r"\b(?:side project|personal project|hobby project|outside work|on my own time|"
+                    r"for (?:a|my|our|one of (?:my|our)) clients?|my (?:previous|former) (?:role|employer))\b")
+    if re.search(outside_work, text, re.I):
+        return None
+    employer = re.compile(r"\b(?:at|within)\s+" + re.escape(company) +
+                          r"(?=\s*(?:[,.;:!?]|$)|\s+(?:we|I|our)\b)", re.I)
+    for span in re.split(r"\n+|(?<=[.!?])\s+", text):
+        if employer.search(span) and FIRSTHAND.search(span) and match_terms(span, workflow):
+            return span.strip()
+    return None
+
+
 def discover_followups(client, path, state, quotes, posts, people, brief, match_terms, *, since, today, reserve,
                        verify=None):
     """Read selected threads, then search employers where someone describes the work."""
@@ -568,26 +581,35 @@ def discover_followups(client, path, state, quotes, posts, people, brief, match_
             continue
         if verify is None and not match_terms(person["role"], brief["target_roles"]):
             continue
+        scope = None
+        if state["plan"].get("scope_spider"):
+            scope = employer_scope(seed["text"], person["company"], workflow, match_terms)
+            if not scope:
+                continue
+            workflow = match_terms(scope, workflow)
         company = person["company_url"]
         if company in employers:
             continue
         query = " OR ".join('"' + phrase.replace('"', "") + '"' for phrase in workflow[:2])
         params = {"authorsCompany": company, "search": query, "sortBy": "date", "page": 1}
         rows = bounded_call(client, path, state, LINKEDIN, params, quotes[LINKEDIN], linkedin_posts, reserve=reserve)
+        scoped_source = {"scope_excerpt": scope, "root_url": seed.get("parent_url", seed["url"])} if scope else {}
         added = 0
         for row in rows or []:
             matched = match_terms(row["text"], workflow)
             if not row["profile"] or row["profile"] == seed["profile"] or not current(row) or not matched:
                 continue
             observed = posts.setdefault(row["url"], {**row, "employer_search": company})
-            found_by = {"lane": "employer", "company": company, "seed_url": seed["url"], "workflow_matches": matched}
+            found_by = {"lane": "employer", "company": company, "seed_url": seed["url"],
+                        "workflow_matches": matched, **scoped_source}
             provenance = observed.setdefault("found_by", [])
             if found_by not in provenance:
                 provenance.append(found_by)
             added += 1
             if added == SPIDER_RESULTS:
                 break
-        employers[company] = {"company_url": company, "seed_url": seed["url"], "seed_profile": seed["profile"]}
+        employers[company] = {"company_url": company, "seed_url": seed["url"],
+                              "seed_profile": seed["profile"], **scoped_source}
         if len(employers) == (2 if verify is not None else 1):
             break
     return employers
@@ -634,14 +656,20 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         plan["results_per_search"] = per_search
     if spider:
         plan["spider"] = True
-        # Preserve the call order of interrupted runs from before employer pivots used commenters.
-        if not args.resume or json.loads((args.out / "treg-run.json").read_text())["plan"].get("evidence_spider"):
-            plan["evidence_spider"] = True
+        if args.resume:
+            # Keep the original lookup order when an earlier version has a request in flight.
+            saved_plan = json.loads((args.out / "treg-run.json").read_text())["plan"]
+            for flag in ("evidence_spider", "scope_spider"):
+                if saved_plan.get(flag):
+                    plan[flag] = True
+        else:
+            plan.update(evidence_spider=True, scope_spider=True)
     endpoints = {LINKEDIN, X}
     if args.profiles:
         endpoints.add(PROFILE)
     if story_searches:
         endpoints.add(WEB)
+    company_signals = brief.get("company_signals", []) if plan.get("scope_spider") and args.profiles else []
     if enrich:
         plan["work_email"] = True
     quotes = client.preflight(endpoints, include_x_quotes=True) if spider else client.preflight(endpoints)
@@ -652,6 +680,8 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         followup_endpoints = [LINKEDIN_COMMENTS, X_REPLIES]
         if plan.get("evidence_spider") and args.profiles:
             followup_endpoints.append(X_PROFILE)
+        if company_signals:
+            followup_endpoints.append(COMPANY)
         for endpoint in followup_endpoints:
             try:
                 quotes.update(client.endpoint_prices({endpoint}))
@@ -807,12 +837,30 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
                                            since=since, today=today, reserve=email_reserve,
                                            verify=verify if evidence_spider else None)
         check_profiles(args.profiles)
+        if company_signals:
+            from work_email import company_details
+
+            # Check thread participants first. Company evidence can lift a short reply for review.
+            thread_people = [verified_author(post, people) for post in posts.values() if post.get("parent_url")]
+            companies = list(dict.fromkeys(person["company_url"] for person in [*thread_people, *people.values()]
+                                          if person and person.get("company_url")))
+            company_fits = {}
+            for company in companies[:3]:
+                profile = bounded_call(client, path, state, COMPANY, {"url": company}, quotes.get(COMPANY),
+                                       lambda data: company_details(data, company), reserve=email_reserve)
+                for span in re.split(r"\n+|(?<=[.!?])\s+", (profile or {}).get("description", "")):
+                    if matches := match_terms(span, company_signals):
+                        company_fits[company] = {"source_url": company, "excerpt": span.strip(), "signals": matches}
+                        break
+            for person in people.values():
+                if fit := company_fits.get(person.get("company_url")):
+                    person["company_fit"] = fit
         if pending_calls(state):
             raise PendingCall("A search is still pending. Resume this run before creating a new preview.")
         for profile, person in people.items():
             employer = employers.get(person.get("company_url"))
             if employer and profile != employer["seed_profile"]:
-                person["employer_signal"] = {key: employer[key] for key in ("company_url", "seed_url")}
+                person["employer_signal"] = {key: value for key, value in employer.items() if key != "seed_profile"}
 
         # Keep the provider's employer filter as a discovery hint until we check the current role.
         kept = []

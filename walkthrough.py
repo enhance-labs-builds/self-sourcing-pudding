@@ -105,6 +105,15 @@ def walk_command(project, name, budget, *, live=False, spider=None, target=None)
     return shlex.join(command)
 
 
+def brief_answer(label, *, required=False, split=False):
+    while True:
+        text = input(f"{label} › ").strip()
+        answer = [item.strip() for item in text.split(",") if item.strip()] if split else text
+        if answer or not required:
+            return answer
+        print("Enter at least one answer to continue.")
+
+
 def run(args, rig):
     if args.budget_usd and not args.live:
         raise ValueError("Use --live with --budget-usd, or omit the cap for the example.")
@@ -126,7 +135,7 @@ def run(args, rig):
         if profile_channel(url) and not website:
             website = input("Company website: ").strip()
         pilot.start_project(Namespace(url=url, website=website, project=project, starter=None,
-                                      target=args.target or 20), rig, show=False)
+                                      target=args.target or 20, ask=brief_answer), rig, show=False)
     elif args.url or args.website:
         raise ValueError("This project already has a URL. Use a new project to start from another company.")
 

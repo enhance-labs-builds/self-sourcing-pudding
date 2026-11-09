@@ -31,7 +31,7 @@ python3 rig.py pilot review --project runs/boat --run preview
 python3 rig.py pilot status --project runs/boat
 ```
 
-`start` reads the site's public copy, social links and comparison links. It proposes roles and search phrases when the copy supports a starting hypothesis. For other sites, fill in the buyer and workflow in `brief.toml`. Use `--starter` to import a researched brief, or `--website` when your starting LinkedIn or X URL needs a public company site. Review or edit the draft before approval. Any later edit to the brief's settings needs a new approval.
+`start` reads the site's public copy, social links and comparison links. It proposes roles and search phrases when the copy supports a starting hypothesis. The guided `walk` asks for the workflow, roles and search phrases when the draft needs them. You can also add competitors and phrases that describe companies you want to prioritize. Use `--starter` with `pilot start` to import a researched brief, or `--website` when your starting LinkedIn or X URL needs a public company site. Review or edit the draft before approval. Any later edit to the brief's settings needs a new approval.
 
 The preview defaults to at most 20 people with a current LinkedIn role and dated source. Use `--target` to choose your own review limit. `holds.json` contains candidates with an identity or freshness gap. Follow-up search can resolve some X authors automatically. You can also supply a reviewed match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
 
@@ -43,13 +43,13 @@ Live pilot runs look up work emails for review candidates whose current roles ma
 
 In a browsing-enabled coding agent, open this repository and ask:
 
-> Use this public company URL as the seed for a sourcing run: `<company URL>`. Follow the link to its official site, read the product copy and public posts, and draft an editable brief for prospective users. Show the inferred customer profile, public search signals, and qualification criteria. Search LinkedIn and X with the rig under a US$0.10 cap. Shortlist people only when you can verify their current role and first-person evidence of the work.
+> Use `<company URL>` to draft an editable sourcing brief. Read the official site and relevant public posts. Show who does the work, how they talk about it, alternatives they use, and what makes their company a fit. Ask me to approve or edit the brief and choose a spend limit. Then search LinkedIn and X. Shortlist people only when you can verify their current role and evidence of the work in their own words.
 
 Start with the company's public LinkedIn page, X (Twitter) profile, or website. Use the official site to check that the profiles belong to the right company. Search the company name for customer examples, then search the problem language and alternatives for people outside the company's audience. Treat customer segments as hypotheses and use candidate evidence to decide who qualifies. The agent drafts the brief and reviews candidates. The CLI runs discovery and records evidence, spend, and decisions. Live discovery uses the Treg setup below.
 
 The [Boat brief](../examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief. Edit its target roles and qualification criteria to steer who makes the shortlist. Edit the ordered `[[searches]]` entries to steer what the rig looks for: `problem`, `brand`, `alternative`, or `account`. For example, Boat lists Daytona as an alternative and searches the more specific phrase `Daytona sandbox`.
 
-Run `live --dry-run` with your brief, output path, and budget to see the exact queries before spending. The rig runs the first four explicit queries on both channels by default, keeps posts containing the relevant phrase, and records what found each post. `--searches` lets you run fewer. Briefs without an explicit search plan still use the keyword defaults.
+In a URL draft, edit `signals` and `alternatives` to regenerate queries. Alternatives are paired with workflow phrases from the same brief. Add explicit `[[searches]]` entries to take control of the query order and wording. Run `live --dry-run` with your brief, output path and budget to see the queries before spending. The direct `live` command runs the first four planned queries by default. `--searches` lets you run fewer.
 
 ## Find people working with alternatives
 
@@ -117,9 +117,11 @@ The live walkthrough follows promising threads and employers by default. Use `--
 .pudding/bin/pudding walk --project runs/my-company --live --target 12
 ```
 
-Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. It checks promising authors' current roles. When an author or commenter describes doing the work and has a confirmed employer, Pudding can search LinkedIn for coworkers posting about the same workflow. It follows up to two employers and keeps the link to the post or comment that led there.
+Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. It checks promising authors' current roles. To search for coworkers, it looks for firsthand wording that names the confirmed employer in the passage describing the work. Clear client and side-project wording leaves the employer search on hold. Pudding follows up to two employers and retains the source link and the passage that led there.
 
-A verified connection to that team can move someone up for review. The shortlist still needs current evidence from that person's own words. For a few promising X authors, Pudding checks whether their public profile links directly to LinkedIn, then compares the names and verifies the LinkedIn role. Unresolved identities stay on hold. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Use the printed continuation command after an interruption.
+Set `company_signals` in the brief to describe companies that deserve a closer look, for example `["municipal fleet", "fleet maintenance"]`. Pudding can check up to three verified employers' public LinkedIn descriptions. It records the matching passage and link. This can lift someone who left a short reply even when nobody else at their company has posted about the work. The shortlist still needs current evidence from that person's own words.
+
+For a few promising X authors, Pudding checks whether their public profile links directly to LinkedIn, then compares the names and verifies the LinkedIn role. Unresolved identities stay on hold. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Use the printed continuation command after an interruption.
 
 #### Include X quote posts
 

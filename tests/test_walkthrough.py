@@ -9,6 +9,24 @@ import rig
 
 
 class WalkthroughTest(TestCase):
+    def test_unfamiliar_url_uses_guided_answers_and_regenerates_searches_after_edit(self):
+        html = "<title>Fieldwork</title><h1>Preventive maintenance for fleets</h1>"
+        answers = ["example.com", "Keep vehicles out of the shop", "Fleet Manager", "preventive maintenance",
+                   "FleetLedger", "municipal fleet", "q"]
+        with TemporaryDirectory() as folder, redirect_stdout(StringIO()), \
+                patch("url_seed.fetch_page", return_value=("https://example.com/", html)), \
+                patch("builtins.input", side_effect=answers):
+            project = Path(folder) / "new"
+            rig.main(["walk", "--project", str(project)])
+            path = project / "brief.toml"
+            brief = rig.read_brief(path)
+            self.assertEqual(brief["company_signals"], ["municipal fleet"])
+            self.assertEqual(brief["searches"][1]["workflow"], ["preventive maintenance"])
+            path.write_text(path.read_text().replace("preventive maintenance", "fleet uptime"))
+            edited = rig.read_brief(path)
+            self.assertEqual(edited["searches"][0]["phrase"], "fleet uptime")
+            self.assertEqual(edited["searches"][1]["workflow"], ["fleet uptime"])
+
     def test_fresh_example_from_url_to_saved_votes(self):
         html = ("<title>Voice guidance for every user</title>"
                 "<meta name='description' content='Screen share voice agents for your customer lifecycle'>"

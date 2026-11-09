@@ -11,16 +11,18 @@ from url_seed import public_url
 UNDISCLOSED_EMPLOYERS = {"stealth", "stealth mode", "stealth startup", "not disclosed", "confidential", "self-employed"}
 
 
-def company_website(data, company_url):
+def company_details(data, company_url):
     company = data.get("element") or {}
+    if linkedin_url(company.get("linkedinUrl"), "company") != company_url:
+        return None
     website = company.get("website")
-    if linkedin_url(company.get("linkedinUrl"), "company") != company_url or not isinstance(website, str) or not website:
-        return None
     try:
-        site = public_url(re.sub(r"^http://", "https://", website.strip(), flags=re.I))
+        site = public_url(re.sub(r"^http://", "https://", website.strip(), flags=re.I)) if isinstance(website, str) else None
     except ValueError:
-        return None
-    return {"url": site, "name": company.get("name") or ""}
+        site = None
+    description = company.get("description")
+    return {"url": site, "name": company.get("name") or "",
+            "description": description if isinstance(description, str) else ""}
 
 
 def work_address(data, profile, domain):
@@ -59,8 +61,8 @@ def candidate_email(person, client, path, ledger, quotes):
     if call_key(COMPANY, company_params) not in calls and remaining() < sum(PER_CALL[key] for key in EMAIL_ENDPOINTS):
         return {"status": "budget_limit"}
     site = bounded_call(client, path, ledger, COMPANY, company_params, quotes[COMPANY],
-                        lambda data: company_website(data, company_url))
-    if not site or " ".join(site["name"].split()).casefold() != employer:
+                        lambda data: company_details(data, company_url))
+    if not site or not site.get("url") or " ".join(site["name"].split()).casefold() != employer:
         return {"status": "employer_unconfirmed"}
     domain = urlsplit(site["url"]).hostname.removeprefix("www.")
     profile_params = {"profileUrl": profile}

@@ -9,6 +9,10 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 
+def terminal_text(value):
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", " ", value)
+
+
 def public_url(value):
     url = urlsplit(value if "://" in value else "https://" + value)
     if (url.scheme != "https" or not url.hostname or url.username is not None
@@ -19,7 +23,10 @@ def public_url(value):
 
 class PublicConnection(http.client.HTTPSConnection):
     def connect(self):
-        addresses = socket.getaddrinfo(self.host, 443, type=socket.SOCK_STREAM)
+        try:
+            addresses = socket.getaddrinfo(self.host, 443, type=socket.SOCK_STREAM)
+        except socket.gaierror as error:
+            raise OSError(f"Could not look up {self.host}.") from error
         if not addresses or any(not ipaddress.ip_address(row[4][0]).is_global for row in addresses):
             raise ValueError("The company URL must resolve to a public address.")
         with_error = None

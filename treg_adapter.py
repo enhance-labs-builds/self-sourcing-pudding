@@ -15,6 +15,8 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
+from url_seed import terminal_text
+
 
 LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
@@ -632,13 +634,13 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         lane = search["lane"]
         linkedin, x = social_queries(search)
         if search.get("workflow"):
-            print(f"  LinkedIn [{lane}]: {linkedin}\n  X [{lane}]: {x}", flush=True)
+            print(terminal_text(f"  LinkedIn [{lane}]: {linkedin}\n  X [{lane}]: {x}"), flush=True)
         else:
-            print(f"  LinkedIn and X [{lane}]: {linkedin}", flush=True)
+            print(terminal_text(f"  LinkedIn and X [{lane}]: {linkedin}"), flush=True)
         if search.get("exclude_phrases"):
-            print("    Skip these phrases for this search: " + ", ".join(search["exclude_phrases"]), flush=True)
+            print(terminal_text("    Skip these phrases for this search: " + ", ".join(search["exclude_phrases"])), flush=True)
     for story in story_searches:
-        print(f"  Customer stories [{story['competitor']}]: {story_query(story)}", flush=True)
+        print(terminal_text(f"  Customer stories [{story['competitor']}]: {story_query(story)}"), flush=True)
     if spider:
         print("  Follow-ups: one LinkedIn comment page, one X reply page, and up to two employer searches.", flush=True)
         print("  A metered read-only X connection also enables one page of quote posts.", flush=True)
@@ -674,8 +676,10 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         plan["work_email"] = True
     quotes = client.preflight(endpoints, include_x_quotes=True) if spider else client.preflight(endpoints)
     minimum = (quotes[LINKEDIN] * pages + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
-    if budget < minimum:
-        raise ValueError("The budget is below the listed cost of the planned searches. Reduce --searches or raise the cap.")
+    # A resume accounts for completed calls and reuses the original reservation for any pending call.
+    if not args.resume and budget < minimum:
+        raise ValueError(f"The listed cost of the planned searches is US${dollars(minimum)}. "
+                         "Reduce --searches or raise the spend limit.")
     if spider:
         followup_endpoints = [LINKEDIN_COMMENTS, X_REPLIES]
         if plan.get("evidence_spider") and args.profiles:

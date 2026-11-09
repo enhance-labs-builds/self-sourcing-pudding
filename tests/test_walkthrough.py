@@ -1,4 +1,5 @@
 from contextlib import redirect_stdout
+import csv
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,10 +11,11 @@ import rig
 
 class WalkthroughTest(TestCase):
     def test_unfamiliar_url_uses_guided_answers_and_regenerates_searches_after_edit(self):
-        html = "<title>Fieldwork</title><h1>Preventive maintenance for fleets</h1>"
+        html = "<title>Fieldwork\x1b]0;changed title\x07</title><h1>Preventive maintenance for fleets</h1>"
         answers = ["example.com", "Keep vehicles out of the shop", "Fleet Manager", "preventive maintenance",
                    "FleetLedger", "municipal fleet", "q"]
-        with TemporaryDirectory() as folder, redirect_stdout(StringIO()), \
+        console = StringIO()
+        with TemporaryDirectory() as folder, redirect_stdout(console), \
                 patch("url_seed.fetch_page", return_value=("https://example.com/", html)), \
                 patch("builtins.input", side_effect=answers):
             project = Path(folder) / "new"
@@ -26,12 +28,15 @@ class WalkthroughTest(TestCase):
             edited = rig.read_brief(path)
             self.assertEqual(edited["searches"][0]["phrase"], "fleet uptime")
             self.assertEqual(edited["searches"][1]["workflow"], ["fleet uptime"])
+        self.assertNotIn("\x1b", console.getvalue())
+        self.assertNotIn("\x07", console.getvalue())
 
     def test_fresh_example_from_url_to_saved_votes(self):
         html = ("<title>Voice guidance for every user</title>"
                 "<meta name='description' content='Screen share voice agents for your customer lifecycle'>"
                 "<h2>Customer onboarding</h2>")
-        answers = ["example.com", "a", "y", "y", "", "", "", "", "y", "n", "n", ""]
+        answers = ["example.com", "a", "y", "y", "", "", "They own onboarding and describe a failure.",
+                   "", "y", "n", "n", "weak", "weak_evidence"]
         console = StringIO()
         with TemporaryDirectory() as folder, redirect_stdout(console), \
                 patch("url_seed.fetch_page", return_value=("https://example.com/", html)), \
@@ -49,6 +54,10 @@ class WalkthroughTest(TestCase):
             second = rig.read_json(project / "runs/example-pass-2/preview.json")
             self.assertGreaterEqual(second["already_reviewed"], 2)
             self.assertEqual(second["candidates"], 0)
+            with (project / "runs/example-pass-2/shortlist.csv").open(newline="") as file:
+                reader = csv.DictReader(file)
+                self.assertEqual(reader.fieldnames, list(rig.CSV_FIELDS))
+                self.assertEqual(list(reader), [])
             self.assertEqual(rig.read_json(project / "state.json")["feedback"], state["feedback"])
         provider.assert_not_called()
         self.assertEqual(brief["signals"][0], "customer onboarding")
@@ -60,4 +69,6 @@ class WalkthroughTest(TestCase):
         self.assertEqual({v["vote"] for v in state["feedback"].values()}, {"yay", "nay"})
         self.assertTrue(any(r["outcome"] == "held" and "Saved for follow-up" in r["reason"] for r in review["outcomes"]))
         self.assertIn("Profiles, posts and work emails below are fictional", console.getvalue())
+        self.assertIn("A manual step failed last week", shortlist["leads"][0]["excerpt"])
+        self.assertIn("Choose one of:", console.getvalue())
         self.assertIn("Run this URL again with your saved brief and feedback", console.getvalue())

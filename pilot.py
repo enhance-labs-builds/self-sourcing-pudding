@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from treg_adapter import atomic_json, billing, linkedin_profile, linkedin_url, pending_calls, run_live
-from url_seed import discover_seed
+from treg_adapter import FIRSTHAND, atomic_json, billing, linkedin_profile, linkedin_url, pending_calls, run_live
+from url_seed import discover_seed, terminal_text
 
 
-FIRSTHAND = re.compile(r"\b(?:we (?:use|built|run|tested|tried|migrated)|our (?:team|production|customers))\b", re.I)
+NAY_REASONS = ("wrong_role", "wrong_account", "weak_evidence", "duplicate", "other")
 
 
 def setup_commands(commands):
@@ -39,6 +39,7 @@ def setup_commands(commands):
     run.add_argument("--target", type=int, metavar="1–500", help="maximum people to review in this run")
     run.add_argument("--spider", action="store_true", help="follow threads and search relevant employers")
     run.add_argument("--no-email", action="store_true", help="skip work email lookup and verification")
+    run.add_argument("--dry-run", action="store_true", help="show this preview's search plan without credentials or spending")
     run.add_argument("--resume", action="store_true", help="continue the same live run and recover any pending call")
     run.add_argument("--corpus", type=Path, help="preview previously collected records offline")
     run.add_argument("--identities", type=Path, help="reviewed links between social authors and LinkedIn profiles")
@@ -79,7 +80,7 @@ def draft(seed, target, *, ask=None):
         data["signals"] = ["customer onboarding", "guided onboarding", "onboarding calls", "time to value"]
         data["qualifies"] = "The person owns customer onboarding or adoption and describes a bottleneck, an experiment, or a rollout their team is working on."
     elif ask:
-        print(f"\n{seed['title']}\n{description}\n{seed['website']}")
+        print(terminal_text(f"\n{seed['title']}\n{description}\n{seed['website']}"))
         print("Use what you know about the people who do this work to finish the brief.")
         data["problem"] = ask("What problem or workflow should we look for?", required=True)
         data["target_roles"] = ask("Who does or owns that work? Separate roles with commas.", required=True, split=True)
@@ -119,7 +120,7 @@ def start_project(args, rig, *, seed=None, show=True):
     (args.project / "runs").mkdir()
     (args.project / "brief.toml").write_text(body, encoding="utf-8")
     atomic_json(args.project / "state.json", {"seed": seed, "approval": None, "feedback": {}})
-    print(f"Company: {seed['title']}\nWebsite: {seed['website']}\n{seed['description']}")
+    print(terminal_text(f"Company: {seed['title']}\nWebsite: {seed['website']}\n{seed['description']}"))
     for channel in ("linkedin", "x"):
         print(f"{channel}: {seed['linked_profiles'].get(channel, 'no company link found on the site')}")
     if show:
@@ -192,7 +193,9 @@ def select_preview(queue, feedback, limit, rig, *, example=False):
             seen += 1
             continue
         if history:
-            row = {**row, "previous_feedback": history["vote"]}
+            seen_sources = set(history["seen_sources"])
+            row = {**row, "previous_feedback": history["vote"],
+                   "sources": [source for source in row["sources"] if source["url"] not in seen_sources]}
         if person and not example and not linkedin_profile(person["profile_url"]):
             row = {**row, "hold": "The author has no verified LinkedIn profile."}
         (held if rig.candidate_hold(row) else known).append(row)
@@ -221,21 +224,33 @@ def run_preview(args, state, rig, *, example=None):
     if args.spider and (args.corpus or example is not None):
         raise ValueError("Use --spider with a live search.")
     brief = rig.read_brief(args.project / "brief.toml")
-    version = brief_version(brief)
-    if not state["approval"] or state["approval"]["version"] != version:
-        raise ValueError("Approve the current brief before running a preview.")
     out = run_path(args.project, args.run)
     target = getattr(args, "target", None)
     if target is not None and (args.batch or not 1 <= target <= 500):
         raise ValueError("Use --target from 1 to 500 without --batch.")
     limit = target if target is not None else brief["limits"]["batch_target"] if args.batch else 20
+    run_brief = {**brief, "limits": {**brief["limits"], "shortlist_size": limit}}
+    count = args.searches or min(len(brief.get("searches", [])) or 2, 20)
+    options = Namespace(searches=count, budget_usd=args.budget_usd,
+                        profiles=args.profiles if args.profiles is not None else limit,
+                        out=out, resume=args.resume, dry_run=args.dry_run, pages=args.pages, spider=args.spider,
+                        results_per_search=args.results_per_search or (30 if args.batch else 12))
+    if args.dry_run:
+        if args.resume or args.corpus:
+            raise ValueError("Use --dry-run to plan a new live preview.")
+        run_live(run_brief, options, rig.match_terms, rig.discovery_terms(run_brief))
+        if not args.no_email:
+            print("The live preview also attempts work email lookup within the same spend limit.")
+        return
+    version = brief_version(brief)
+    if not state["approval"] or state["approval"]["version"] != version:
+        raise ValueError("Approve the current brief before running a preview.")
     previous = rig.read_json(out / "preview.json") if (out / "preview.json").exists() else None
     recovering_email = previous and previous["mode"] == "live" and previous.get("pending_spend_usd")
     if out.exists() and (not args.resume or (previous and not recovering_email) or args.corpus or example is not None):
         raise ValueError("Choose a fresh run name. Resume is for interrupted live runs.")
     if recovering_email and (previous["brief_version"] != version or previous["max_candidates"] != limit or args.no_email):
         raise ValueError("Resume work email using the original approved brief and run options.")
-    run_brief = {**brief, "limits": {**brief["limits"], "shortlist_size": limit}}
     identities = rig.read_json(args.identities) if args.identities else None
     prepared = None
     previous_decisions = None
@@ -267,11 +282,6 @@ def run_preview(args, state, rig, *, example=None):
         corpus = rig.read_json(args.corpus)
         stats = {"mode": "replay", "spend_usd": 0, "snapshot": corpus["as_of"]}
     else:
-        count = args.searches or min(len(brief.get("searches", [])) or 2, 20)
-        options = Namespace(searches=count, budget_usd=args.budget_usd,
-                            profiles=args.profiles if args.profiles is not None else limit,
-                            out=out, resume=args.resume, dry_run=False, pages=args.pages, spider=args.spider,
-                            results_per_search=args.results_per_search or (30 if args.batch else 12))
         corpus = run_live(run_brief, options, rig.match_terms, rig.discovery_terms(run_brief),
                           enrich=None if args.no_email else enrich)
         ledger = rig.read_json(out / "treg-run.json")
@@ -346,42 +356,46 @@ def attach_identities(corpus, identities, rig):
     corpus["people"] = list(people.values())
 
 
-def interactive_votes(queue):
+def interactive_votes(queue, rig):
     votes = {}
     if queue.get("mode") == "example":
         print("\nExample candidates. Profiles, posts and work emails below are fictional.")
     for row in queue["candidates"]:
         person = row["person"]
-        print(f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
-              else f"\n{row['sources'][0]['author']}")
+        label = (f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
+                 else f"\n{row['sources'][0]['author']}")
+        print(terminal_text(label))
         if person and person.get("employer_signal"):
-            print(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}")
+            print(terminal_text(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}"))
         if person and (fit := person.get("company_fit")):
-            excerpt = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", fit["excerpt"][:400])
-            print(f"  Company fit · {excerpt}\n  {fit['source_url']}")
+            print(terminal_text(f"  Company fit · {fit['excerpt'][:400]}\n  {fit['source_url']}"))
         if row.get("work_email", {}).get("status") == "verified":
             print(f"Verified work email: {row['work_email']['address']}")
         elif row.get("work_email", {}).get("status") == "example":
             print(f"Example work email: {row['work_email']['address']}")
         sources = [source for source in row["sources"] if not source["hold"]]
         for i, source in enumerate(sources, 1):
-            excerpt = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", source["text"][:650])
-            print(f"  {i}. {source['channel']} · {source.get('published_on') or 'date unknown'} · {source['url']}\n"
-                  f"     {excerpt}")
+            print(terminal_text(
+                f"  {i}. {source['channel']} · {source.get('published_on') or 'date unknown'} · {source['url']}\n"
+                f"     {source['text'][:650]}"
+            ))
             for discovery in source.get("found_by", []):
                 if discovery.get("lane") == "thread":
-                    print(f"     Found in the conversation on {discovery['seed_url']}")
+                    print(terminal_text(f"     Found in the conversation on {discovery['seed_url']}"))
                 elif discovery.get("lane") == "employer":
-                    print(f"     Found by searching the employer of the author of {discovery['seed_url']}")
+                    print(terminal_text(f"     Found by searching the employer of the author of {discovery['seed_url']}"))
         action = input("[y] yay, [n] nay, Enter to skip, [q] save and quit: ").strip().lower()
         if action == "q":
             break
         if action == "n":
-            print("Reasons: wrong_role, wrong_account, weak_evidence, duplicate, other")
+            print("Reasons: " + ", ".join(NAY_REASONS))
             code = input("Reason code [weak_evidence]: ").strip() or "weak_evidence"
+            while code not in NAY_REASONS:
+                print("Choose one of: " + ", ".join(NAY_REASONS))
+                code = input("Reason code [weak_evidence]: ").strip() or "weak_evidence"
             votes[row["id"]] = {"vote": "nay", "reason_code": code}
         if action == "y":
-            qualify = input("Add to the shortlist using firsthand evidence? [y/N] ").strip().lower()
+            qualify = input("Add to the shortlist using firsthand evidence? [y/N, Enter keeps for follow-up] ").strip().lower()
             if qualify not in {"y", "yes"}:
                 votes[row["id"]] = {"vote": "yay", "reason": "Saved for follow-up. Firsthand evidence still needs review."}
                 continue
@@ -389,14 +403,16 @@ def interactive_votes(queue):
             while not i.isascii() or not i.isdecimal() or not 1 <= int(i) <= len(sources):
                 i = input(f"Choose a source from 1 to {len(sources)}: ").strip()
             source = sources[int(i) - 1]
-            spans = [span.strip() for span in re.split(r"\n+|(?<=[.!?])\s+", source["text"]) if span.strip()]
-            suggested = next((span for span in spans if FIRSTHAND.search(span)), spans[0])[:240].rstrip()
-            visible = re.sub(r"[\x00-\x1f\x7f]", "", suggested)
-            print(f"Suggested evidence: {visible}")
+            body = source["text"].strip()
+            spans = re.split(r"\n+|(?<=[.!?])\s+", body)
+            first = next((span for span in spans if FIRSTHAND.search(span)), spans[0])
+            start = body.find(first) if len(body) > 240 else 0
+            suggested = body[start:start + 240].rstrip()
+            print(terminal_text(f"Suggested evidence: {suggested}"))
             excerpt = input("Enter to use that evidence, or paste a different exact excerpt: ").strip() or suggested
             while not excerpt or excerpt not in source["text"]:
                 excerpt = input("Paste an exact excerpt from that source: ").strip()
-            reason = input("Why is this a fit? [Reviewed as a fit] ").strip() or "Reviewed as a fit for this brief."
+            reason = rig.required_prompt("Why does this person fit the brief?")
             kind = input("[p] firsthand problem, [w] explicit work [w]: ").strip()
             votes[row["id"]] = {"vote": "yay", "source_id": source["id"], "excerpt": excerpt,
                                 "evidence_kind": "firsthand_problem" if kind == "p" else "explicit_work", "reason": reason}
@@ -416,7 +432,7 @@ def review(args, state, rig):
     unreviewed = [row for row in queue["candidates"] if row["id"] not in saved]
     if not args.votes and not unreviewed:
         print("No new candidates to review.")
-    votes = rig.read_json(args.votes) if args.votes else interactive_votes({**queue, "candidates": unreviewed})
+    votes = rig.read_json(args.votes) if args.votes else interactive_votes({**queue, "candidates": unreviewed}, rig)
     decisions = {}
     updates = {}
     for key, vote in votes.items():
@@ -424,7 +440,7 @@ def review(args, state, rig):
             raise ValueError("Each vote needs a candidate in this preview and a yay or nay decision.")
         row = rows[key]
         code = vote.get("reason_code", "other" if vote["vote"] == "yay" else "weak_evidence")
-        if code not in {"wrong_role", "wrong_account", "weak_evidence", "duplicate", "other"}:
+        if code not in NAY_REASONS:
             raise ValueError("Unknown feedback reason code.")
         label = feedback_key(row)
         previous = updates.get(label, state["feedback"].get(label, {}))

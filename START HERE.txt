@@ -5,10 +5,14 @@ Open Terminal in this extracted folder. Run:
 
   bash "Start Pudding.command" --project runs/my-company
 
-Paste your company URL, edit or approve the brief, then vote yay or nay
-on at least one candidate. The walkthrough reads your public site and
-uses fictional candidates and work emails. It costs US$0. To see the
-email column, open the example shortlist CSV linked in README.md.
+Paste the URL of the page that explains your product and edit or
+approve the brief. This requires internet access and costs US$0.
+The candidates and work emails are fictional. To export a candidate,
+vote yay, answer yes to adding them to the shortlist, and give one
+reason they fit. Open runs/my-company/runs/example-preview/shortlist.csv.
+
+If the website is unavailable, run python3 rig.py demo from this folder.
+The offline Ramp demo writes ten fictional leads to runs/demo/shortlist.csv.
 
 Run it again with the same project and a new run name:
 

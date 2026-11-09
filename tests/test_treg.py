@@ -15,6 +15,27 @@ from treg_adapter import (COMPANY, LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_RE
 
 
 class TregSpendTest(TestCase):
+    def test_resume_reuses_original_reservation_when_search_price_rises(self):
+        client = Mock()
+        client.preflight.side_effect = [{LINKEDIN: 2_000, X: 600}, {LINKEDIN: 5_000, X: 600}]
+        client.request.side_effect = [
+            ValueError("Connection dropped after billing"),
+            (200, {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true",
+                   "x-treg-original-cost-micro": "2000"}, {"elements": []}),
+            (200, {"x-treg-cost-micro": "600"}, {"output": {"data": {"items": []}}}),
+        ]
+        brief = {"signals": ["preview deploy"], "alternatives": [], "limits": {"source_age_days": 30}}
+        with TemporaryDirectory() as folder, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            args = SimpleNamespace(searches=1, budget_usd="0.003", profiles=0, dry_run=False,
+                                   out=Path(folder) / "run", resume=False)
+            with self.assertRaises(PendingCall):
+                run_live(brief, args, match_terms, discovery_terms(brief))
+            args.resume = True
+            run_live(brief, args, match_terms, discovery_terms(brief))
+            self.assertEqual(billing(read_json(args.out / "treg-run.json")), 2_600)
+        self.assertEqual(client.request.call_args_list[0], client.request.call_args_list[1])
+
     def test_spider_feeds_threads_and_verified_employer_posts_into_one_queue_on_resume(self):
         now = datetime.now(timezone.utc)
         company = "https://www.linkedin.com/company/fixture-team"

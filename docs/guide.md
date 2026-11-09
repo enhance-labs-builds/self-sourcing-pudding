@@ -72,6 +72,19 @@ The [Stripe](../examples/company-briefs/stripe.toml) and [Harvey](../examples/co
 
 ## Run a live search
 
+### Plan a small preview
+
+After the free walkthrough, use your project to see which queries the live preview would run. The dry run uses the same options as the live command below. It needs no Treg credentials and does not make paid calls.
+
+```sh
+python3 rig.py pilot run --project runs/my-company --run live-preview \
+  --searches 2 --target 5 --budget-usd 0.50 --spider --dry-run
+```
+
+`--searches 2` limits the preview to the first two planned queries per channel. `--target 5` sets the maximum number of people to review. The preview can also follow threads and employers and attempt work email lookup within the cap. The dry run shows scope. Live execution checks current Treg prices before sending paid requests.
+
+### Set up Treg and run the preview
+
 Sign in to the [Treg dashboard](https://treg.to/app?ref=docs). Use a team with prepaid balance and no custom provider keys or tools. You can add one [Treg-managed read-only X connection](#include-x-quote-posts). Copy the team slug and create an API key for that team. Pudding uses that key as its token. Keep it out of the brief and repository.
 
 Set these in the terminal where you’ll run Pudding. Paste your token at the prompt and press Enter.
@@ -84,22 +97,20 @@ printf '\n'
 export TREG_TOKEN
 ```
 
-From the repository folder, start a live search with your walkthrough project. Pudding asks how much to spend before it runs paid searches. You can also supply `--budget-usd` up front. Use `--target` to pick the maximum number of people to review.
+From the repository folder, start a live search with your walkthrough project. The example uses the same settings as the dry run above. Set your own cap, or omit `--budget-usd` to have Pudding ask before searching.
 
 ```sh
-.pudding/bin/pudding walk --project runs/my-company --live
+.pudding/bin/pudding walk --project runs/my-company --live \
+  --searches 2 --target 5 --budget-usd 0.50
 ```
 
-To inspect the Ramp example's search plan and then run the project you approved earlier, use:
+To use the Ramp project from the earlier example, replace `runs/my-company` with `runs/ramp` in the planning and live commands. For a script that reviews separately, use `pilot run` with the same options as the dry run and then call `pilot review`:
 
 ```sh
-python3 rig.py live --brief examples/company-briefs/ramp.toml \
-  --out runs/first-live --budget-usd 0.10 --dry-run
-python3 rig.py pilot run --project runs/ramp --run preview --budget-usd 0.50 --spider
-python3 rig.py pilot review --project runs/ramp --run preview
+python3 rig.py pilot review --project runs/ramp --run live-preview
 ```
 
-The `live --dry-run` command prints the search plan without credentials or network access. The standalone `live` command checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--profiles` to adjust that limit. Use the live walkthrough or `pilot run` when you want work email lookup. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile.
+The standalone `live` command runs discovery and looks up at most four LinkedIn profiles by default. Use the live walkthrough or `pilot run` when you want work email lookup. A LinkedIn result needs a separate profile lookup with one clear current role. X results stay on hold until an author is independently linked to a professional profile.
 
 If the first preview is thin, check `preview.json` for LinkedIn and X coverage and `holds.json` for evidence or identity gaps. When the searches completed and the results are still off, edit the brief before the next run. Use phrases you saw practitioners use in their own posts, pair an alternative with a concrete workflow, and describe the kinds of companies you want to find. Review and approve the revised brief, then use a new run name in the same project to keep your votes.
 

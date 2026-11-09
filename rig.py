@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from treg_adapter import evidence_priority
+from url_seed import terminal_text
 
 
 EXAMPLES = Path(__file__).resolve().parent / "examples"
@@ -25,6 +26,7 @@ EVIDENCE_KINDS = {"firsthand_problem", "explicit_work"}
 CSV_FIELDS = (
     "name", "role", "company", "profile_url", "role_checked_on", "evidence_kind",
     "source_url", "published_on", "excerpt", "reason", "history_status",
+    "work_email", "work_email_status", "work_email_checked_on",
 )
 
 
@@ -187,25 +189,25 @@ def init_brief(path, example):
 
 
 def show_plan(brief):
-    print(f"Product: {brief['product']}\nProblem: {brief['problem']}")
-    print(f"Prioritize roles: {', '.join(brief['target_roles'])}")
-    print(f"Search signals: {', '.join(brief['signals'])}")
-    print(f"Alternatives: {', '.join(brief['alternatives']) or '(none)'}")
+    print(terminal_text(f"Product: {brief['product']}\nProblem: {brief['problem']}"))
+    print(terminal_text(f"Prioritize roles: {', '.join(brief['target_roles'])}"))
+    print(terminal_text(f"Search signals: {', '.join(brief['signals'])}"))
+    print(terminal_text(f"Alternatives: {', '.join(brief['alternatives']) or '(none)'}"))
     if brief.get("company_signals"):
-        print(f"Company fit: {', '.join(brief['company_signals'])}")
+        print(terminal_text(f"Company fit: {', '.join(brief['company_signals'])}"))
     if "searches" in brief:
         print("Live queries for LinkedIn and X, in priority order:")
         for search in brief["searches"]:
             workflow = " + (" + " or ".join(search["workflow"]) + ")" if search.get("workflow") else ""
             exclusions = "; skip: " + ", ".join(search["exclude_phrases"]) if search.get("exclude_phrases") else ""
-            print(f"  {search['lane']}: {search['phrase']}{workflow}{exclusions}")
+            print(terminal_text(f"  {search['lane']}: {search['phrase']}{workflow}{exclusions}"))
             if search.get("seed_url"):
-                print(f"    Seed: {search['seed_url']}")
+                print(terminal_text(f"    Seed: {search['seed_url']}"))
     for story in brief.get("customer_stories", []):
-        print(f"  Customer stories: {story['competitor']} · {story['workflow']} · {story['site']}")
-    print(f"Qualify when: {brief['qualifies']}")
-    print(f"Pass over: {', '.join(brief['exclusions']) or '(none listed)'}")
-    print(f"More like: {brief['more_like']}\nLess like: {brief['less_like']}")
+        print(terminal_text(f"  Customer stories: {story['competitor']} · {story['workflow']} · {story['site']}"))
+    print(terminal_text(f"Qualify when: {brief['qualifies']}"))
+    print(terminal_text(f"Pass over: {', '.join(brief['exclusions']) or '(none listed)'}"))
+    print(terminal_text(f"More like: {brief['more_like']}\nLess like: {brief['less_like']}"))
     limits = brief["limits"]
     print(f"Limits: {limits['source_age_days']} days for sources, "
           f"{limits['role_age_days']} days for role checks, {limits['shortlist_size']} shortlisted.")
@@ -352,9 +354,10 @@ def interactive_review(queue):
     for row in queue["candidates"]:
         print()
         person = row["person"]
-        print(f"{person['name']} · {person['role']} · {person['company']}" if person else row["sources"][0]["author"])
+        label = f"{person['name']} · {person['role']} · {person['company']}" if person else row["sources"][0]["author"]
+        print(terminal_text(label))
         if person:
-            print(f"  Profile: {person['profile_url']}")
+            print(terminal_text(f"  Profile: {person['profile_url']}"))
         usable = []
         for source in row["sources"]:
             if source["hold"]:
@@ -363,7 +366,7 @@ def interactive_review(queue):
                 usable.append(source)
                 label = str(len(usable))
             print(f"  [{label}] {source['channel']} {source['kind']} · {source.get('published_on') or 'unknown date'}")
-            print(f"      {source['text']}\n      {source['url']}")
+            print(terminal_text(f"      {source['text']}\n      {source['url']}"))
         hold = candidate_hold(row)
         if hold:
             print(f"  Held: {hold}")
@@ -488,15 +491,12 @@ def write_results(run, queue, decisions):
     if queue.get("mode") == "example":
         result["mode"] = "example"
     write_json(run / "shortlist.json", result)
-    fields = CSV_FIELDS
-    if any("work_email" in candidate for candidate in queue["candidates"]):
-        fields += ("work_email", "work_email_status", "work_email_checked_on")
     with (run / "shortlist.csv").open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows({key: csv_value(row.get(key, "")) for key in fields} for row in shortlist)
+        writer.writerows({key: csv_value(row.get(key, "")) for key in CSV_FIELDS} for row in shortlist)
     for row in results:
-        print(f"{row['outcome']:>11}  {row['name']}: {row['reason']}")
+        print(terminal_text(f"{row['outcome']:>11}  {row['name']}: {row['reason']}"))
     print(f"\n{len(shortlist)} shortlisted. See {run / 'shortlist.csv'} and {run / 'shortlist.json'}.")
 
 
@@ -579,7 +579,7 @@ def main(argv=None):
             print()
             write_results(args.out, queue, read_json(EXAMPLE / "decisions.json"))
     except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
-        cli.exit(2, f"rig: {error}\n")
+        cli.exit(2, terminal_text(f"rig: {error}\n"))
     except (EOFError, KeyboardInterrupt):
         cli.exit(130, "\nStopped. No new decisions were exported.\n")
 

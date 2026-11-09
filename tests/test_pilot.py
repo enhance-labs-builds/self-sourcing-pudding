@@ -34,6 +34,10 @@ class PilotTest(TestCase):
             seed = rig.read_json(state_path)["seed"]
             self.assertEqual(seed["linked_profiles"], {"x": "https://x.com/example"})
             self.assertEqual(list(seed["comparisons"]), ["fixture competitor"])
+            with patch("treg_adapter.Treg") as provider:
+                run("run", "--run", "plan", "--searches", "2", "--target", "5", "--dry-run")
+            provider.assert_not_called()
+            self.assertFalse((project / "runs/plan").exists())
             with self.assertRaises(SystemExit) as unapproved:
                 run("run", "--run", "first", "--corpus", str(path))
             self.assertEqual(unapproved.exception.code, 2)
@@ -58,6 +62,14 @@ class PilotTest(TestCase):
             self.assertEqual(rig.read_json(project / "runs/batch/preview.json")["candidates"], 1)
             run("run", "--run", "custom", "--corpus", str(path), "--target", "3")
             self.assertEqual(rig.read_json(project / "runs/custom/preview.json")["max_candidates"], 3)
+            new_source = {**corpus["observations"][0], "id": "nia-update",
+                          "url": "https://linkedin.example/posts/nia-update", "published_on": corpus["as_of"]}
+            corpus["observations"].append(new_source)
+            rig.write_json(path, corpus)
+            run("run", "--run", "fresh-evidence", "--corpus", str(path))
+            queue = rig.read_json(project / "runs/fresh-evidence/queue.json")["candidates"]
+            nia = next(row for row in queue if row["id"] == "person:nia")
+            self.assertEqual([source["id"] for source in nia["sources"]], ["nia-update"])
             draft = project / "brief.toml"
             draft.write_text(draft.read_text().replace("batch_target = 1", "batch_target = 2"))
             with self.assertRaises(SystemExit) as edited:

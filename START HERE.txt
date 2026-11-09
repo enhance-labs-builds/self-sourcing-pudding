@@ -9,7 +9,8 @@ Paste the URL of the page that explains your product and edit or
 approve the brief. This requires internet access and costs US$0.
 The candidates and work emails are fictional. To export a candidate,
 vote yay, answer yes to adding them to the shortlist, and give one
-reason they fit. Open runs/my-company/runs/example-preview/shortlist.csv.
+reason they fit. Finish or press q to save. Then open
+runs/my-company/runs/example-preview/shortlist.csv.
 
 If the website is unavailable, run python3 rig.py demo from this folder.
 The offline Ramp demo writes ten fictional leads to runs/demo/shortlist.csv.

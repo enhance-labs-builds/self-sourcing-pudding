@@ -67,13 +67,16 @@ def open_editor(path):
         print(f"The editor exited with an error. You can also edit {path} directly.")
 
 
-def review_brief(project, state, rig):
+def review_brief(project, state, rig, *, target=None, searches=None):
     path = project / "brief.toml"
     while True:
         brief = None
         try:
             brief = rig.read_brief(path)
-            rig.show_plan(brief)
+            preview = {**brief, "limits": {**brief["limits"], "shortlist_size": target or 20}}
+            if searches is not None and "searches" in preview:
+                preview["searches"] = preview["searches"][:searches]
+            rig.show_plan(preview)
         except ValueError as error:
             print(f"Brief needs an edit: {error}")
         choice = input("\n[a] Approve brief   [e] Edit brief   [q] Save and exit: ").strip().lower()
@@ -135,7 +138,7 @@ def run(args, rig):
           else "Example preview · public site for the brief · fictional candidates · US$0")
     print(f"Project: {project.resolve()}")
     if not (project / "state.json").exists():
-        url = public_url(args.url or input("\nCompany URL: ").strip())
+        url = public_url(args.url or input("\nCompany URL: ").strip(), keep_query=True)
         website = args.website
         if profile_channel(url) and not website:
             website = input("Company website: ").strip()
@@ -171,7 +174,7 @@ def run(args, rig):
         command_options = {"live": args.live, "spider": spider, "target": target, "searches": searches}
         if not out.exists():
             print("\n1. Review your sourcing brief")
-            if not review_brief(project, state, rig):
+            if not review_brief(project, state, rig, target=target, searches=searches):
                 continue_command = walk_command(project, name, budget, **command_options)
                 print(f"Draft saved. Continue with:\n  {continue_command}")
                 return
@@ -197,7 +200,7 @@ def run(args, rig):
                 raise
             summary = rig.read_json(summary_path)
         print("\n3. Review candidates")
-        pilot.review(Namespace(project=project, run=name, votes=None), state, rig)
+        pilot.review(Namespace(project=project, run=name, votes=None, follow_ups=False), state, rig)
         print(f"\nYour shortlist is ready at {out.resolve() / 'shortlist.csv'}")
         if summary.get("pending_spend_usd"):
             print(f"Resume the pending work email in this run with:\n  {continue_command}")

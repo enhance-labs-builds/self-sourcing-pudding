@@ -139,6 +139,13 @@ class PilotTest(TestCase):
             run("review", "--run", "live", "--votes", str(votes))
             state = rig.read_json(project / "state.json")
             self.assertEqual(len(state["feedback"]), 1)
+            review_file = out / "review.json"
+            old_review = rig.read_json(review_file)
+            old_review["queue_sha256"] = rig.queue_digest(rig.read_json(out / "queue.json"), include_email=True)
+            rig.write_json(review_file, old_review)
+            with patch("rig.write_results", side_effect=KeyboardInterrupt), self.assertRaises(SystemExit) as interrupted:
+                run("run", *options, "--resume")
+            self.assertEqual(interrupted.exception.code, 130)
             run("run", *options, "--resume")
             self.assertEqual(rig.read_json(project / "state.json"), state)
             preview = rig.read_json(out / "preview.json")

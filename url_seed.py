@@ -13,12 +13,12 @@ def terminal_text(value):
     return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", " ", value)
 
 
-def public_url(value):
+def public_url(value, *, keep_query=False):
     url = urlsplit(value if "://" in value else "https://" + value)
     if (url.scheme != "https" or not url.hostname or url.username is not None
             or url.port not in (None, 443) or not re.fullmatch(r"[a-z0-9.-]+\.[a-z0-9-]+", url.hostname)):
         raise ValueError("Enter a public HTTPS company URL.")
-    return urlunsplit(("https", url.hostname, url.path or "/", "", ""))
+    return urlunsplit(("https", url.hostname, url.path or "/", url.query if keep_query else "", ""))
 
 
 class PublicConnection(http.client.HTTPSConnection):
@@ -48,11 +48,12 @@ def fetch_page(url):
         parsed = urlsplit(url)
         conn = PublicConnection(parsed.hostname, timeout=5)
         try:
-            conn.request("GET", parsed.path, headers={"Accept": "text/html", "User-Agent": "SourcingRig/1.0"})
+            target = urlunsplit(("", "", parsed.path, parsed.query, ""))
+            conn.request("GET", target, headers={"Accept": "text/html", "User-Agent": "SourcingRig/1.0"})
             with conn.getresponse() as response:
                 redirect = response.getheader("Location")
                 if 300 <= response.status < 400 and redirect:
-                    url = public_url(urljoin(url, redirect))
+                    url = public_url(urljoin(url, redirect), keep_query=True)
                     continue
                 if response.status != 200 or "text/html" not in response.getheader("Content-Type", "").lower():
                     raise ValueError(f"Could not read the company page (HTTP {response.status}).")
@@ -103,7 +104,7 @@ def profile_channel(url):
 
 def discover_seed(value, website=None, html=None):
     seed = public_url(value)
-    site = public_url(website) if website else seed
+    site = public_url(website or value, keep_query=True)
     if profile_channel(site):
         raise ValueError("Add --website with the company’s public website for a LinkedIn or X starting URL.")
     final_url, html = fetch_page(site) if html is None else (site, html)
@@ -126,5 +127,5 @@ def discover_seed(value, website=None, html=None):
             if comparison and len(comparisons) < 8:
                 comparisons[comparison[1].replace("-", " ")] = url
     headings = " ".join(page.fields.get(tag, "") for tag in ("h1", "h2", "h3")).strip()
-    return {"input": seed, "website": final_url, "title": title, "description": description, "headings": headings,
+    return {"input": seed, "website": public_url(final_url), "title": title, "description": description, "headings": headings,
             "linked_profiles": links, "comparisons": comparisons}

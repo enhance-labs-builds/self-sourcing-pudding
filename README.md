@@ -34,9 +34,9 @@ cd self-sourcing-pudding
 bash install.sh --project runs/my-company
 ```
 
-Paste your product URL when prompted. When the page leaves gaps, Pudding asks who owns the work, how they talk about it, and which companies or alternatives matter. Review the queries before approving.
+Paste your product URL when prompted. Pudding reads the page title and description. For most products, you’ll answer who owns the work, how they talk about it, and which companies or alternatives matter. An AI agent can suggest answers from the page. Review the queries before approving.
 
-To put someone in the CSV, vote yay and answer yes when asked whether to add them to the shortlist. Keep the quote that shows what they are working on and write one line about why it fits. Open `runs/my-company/runs/example-preview/shortlist.csv`. Pudding prints the command for another pass with the same brief and votes.
+To put someone in the CSV, vote yay and answer yes when asked whether to add them to the shortlist. Keep the quote that shows what they are working on and write one line about why it fits. Finish the review or press `q` to save and quit. Open `runs/my-company/runs/example-preview/shortlist.csv`. Pudding prints the command for another pass with the same brief and votes.
 
 ### Run the offline demo
 

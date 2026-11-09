@@ -34,7 +34,9 @@ python3 rig.py pilot status --project runs/ramp
 
 The preview defaults to at most 20 people with a current LinkedIn role and dated source. Use `--target` to choose your own review limit. `holds.json` contains candidates with an identity or freshness gap. Follow-up search can resolve some X authors automatically. You can also supply a reviewed match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
 
-Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. For a recurring batch size, set `limits.batch_target` in the brief and use `pilot run --batch`. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The target and spend limit are ceilings. The pilot is run on demand.
+Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. Use the printed `pilot review --follow-ups` command to reopen follow-ups from that run. Press `q` to save and quit. If you interrupt the review, Pudding saves votes you completed.
+
+The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. For a recurring batch size, set `limits.batch_target` in the brief and use `pilot run --batch`. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The target and spend limit are ceilings. The pilot is run on demand.
 
 ### Draft a brief with a browsing-enabled agent
 
@@ -81,7 +83,7 @@ python3 rig.py pilot run --project runs/my-company --run live-preview \
   --searches 2 --target 5 --budget-usd 0.50 --spider --dry-run
 ```
 
-`--searches 2` limits the preview to the first two planned queries per channel. `--target 5` sets the maximum number of people to review. The preview can also follow threads and employers and attempt work email lookup within the cap. The dry run shows scope. Live execution checks current Treg prices before sending paid requests.
+`--searches 2` limits the preview to the first two planned queries per channel. `--target 5` sets the maximum number of people to review. The preview can also follow threads and employers and attempt work email lookup within the cap. The US$0.50 is an example cap. Live execution checks Treg prices and prints the base search cost before sending paid requests. Role checks, follow-ups, and email may add to that cost within your cap.
 
 ### Set up Treg and run the preview
 
@@ -100,7 +102,7 @@ export TREG_TOKEN
 From the repository folder, start a live search with your walkthrough project. The example uses the same settings as the dry run above. Set your own cap, or omit `--budget-usd` to have Pudding ask before searching.
 
 ```sh
-.pudding/bin/pudding walk --project runs/my-company --live \
+python3 rig.py walk --project runs/my-company --live \
   --searches 2 --target 5 --budget-usd 0.50
 ```
 

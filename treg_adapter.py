@@ -630,6 +630,9 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     budget = micro_dollars(args.budget_usd)
     print(f"Treg run ceiling: US${dollars(budget)}. Up to {len(terms) * (pages + 1)} social searches, "
           f"{len(story_searches)} customer story searches, and {args.profiles} role lookups.", flush=True)
+    if getattr(args, "review_limit", None) is not None:
+        print(f"Review up to {args.review_limit} candidates.", flush=True)
+    print(f"X searches cover the last {brief['limits']['source_age_days']} days.", flush=True)
     for search in searches:
         lane = search["lane"]
         linkedin, x = social_queries(search)
@@ -643,6 +646,10 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         print(terminal_text(f"  Customer stories [{story['competitor']}]: {story_query(story)}"), flush=True)
     if spider:
         print("  Follow-ups: one LinkedIn comment page, one X reply page, and up to two employer searches.", flush=True)
+        if args.profiles:
+            print(f"  Up to {min(4, args.profiles)} X author profile lookups.", flush=True)
+            if brief.get("company_signals"):
+                print("  Up to three employer descriptions for company fit.", flush=True)
         print("  A metered read-only X connection also enables one page of quote posts.", flush=True)
     if args.dry_run:
         return None
@@ -677,9 +684,11 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     quotes = client.preflight(endpoints, include_x_quotes=True) if spider else client.preflight(endpoints)
     minimum = (quotes[LINKEDIN] * pages + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
     # A resume accounts for completed calls and reuses the original reservation for any pending call.
-    if not args.resume and budget < minimum:
-        raise ValueError(f"The listed cost of the planned searches is US${dollars(minimum)}. "
-                         "Reduce --searches or raise the spend limit.")
+    if not args.resume:
+        if budget < minimum:
+            raise ValueError(f"The listed cost of the planned searches is US${dollars(minimum)}. "
+                             "Reduce --searches or raise the spend limit.")
+        print(f"Listed base search cost: US${dollars(minimum)} before role, follow-up, and email lookups.", flush=True)
     if spider:
         followup_endpoints = [LINKEDIN_COMMENTS, X_REPLIES]
         if plan.get("evidence_spider") and args.profiles:

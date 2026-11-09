@@ -7,16 +7,17 @@ from unittest import TestCase
 from unittest.mock import patch
 
 import rig
+from pilot import interactive_votes
 
 
 class WalkthroughTest(TestCase):
     def test_unfamiliar_url_uses_guided_answers_and_regenerates_searches_after_edit(self):
         html = "<title>Fieldwork\x1b]0;changed title\x07</title><h1>Preventive maintenance for fleets</h1>"
-        answers = ["example.com", "Keep vehicles out of the shop", "Fleet Manager", "preventive maintenance",
+        answers = ["https://example.com/?product=fleet#intro", "Keep vehicles out of the shop", "Fleet Manager", "preventive maintenance",
                    "FleetLedger", "municipal fleet", "q"]
         console = StringIO()
         with TemporaryDirectory() as folder, redirect_stdout(console), \
-                patch("url_seed.fetch_page", return_value=("https://example.com/", html)), \
+                patch("url_seed.fetch_page", return_value=("https://example.com/?product=fleet", html)) as fetch, \
                 patch("builtins.input", side_effect=answers):
             project = Path(folder) / "new"
             rig.main(["walk", "--project", str(project)])
@@ -28,6 +29,8 @@ class WalkthroughTest(TestCase):
             edited = rig.read_brief(path)
             self.assertEqual(edited["searches"][0]["phrase"], "fleet uptime")
             self.assertEqual(edited["searches"][1]["workflow"], ["fleet uptime"])
+        fetch.assert_called_once_with("https://example.com/?product=fleet")
+        self.assertNotIn("?product=fleet", brief["product"])
         self.assertNotIn("\x1b", console.getvalue())
         self.assertNotIn("\x07", console.getvalue())
 
@@ -59,6 +62,9 @@ class WalkthroughTest(TestCase):
                 self.assertEqual(reader.fieldnames, list(rig.CSV_FIELDS))
                 self.assertEqual(list(reader), [])
             self.assertEqual(rig.read_json(project / "state.json")["feedback"], state["feedback"])
+            with patch("builtins.input", side_effect=["y", "y", "", "", "They ran an onboarding experiment.", "w"]):
+                rig.main(["pilot", "review", "--project", str(project), "--run", "example-preview", "--follow-ups"])
+            self.assertEqual(len(rig.read_json(out / "shortlist.json")["leads"]), 2)
         provider.assert_not_called()
         self.assertEqual(brief["signals"][0], "customer onboarding")
         self.assertEqual(preview["spend_usd"], 0)
@@ -72,3 +78,11 @@ class WalkthroughTest(TestCase):
         self.assertIn("A manual step failed last week", shortlist["leads"][0]["excerpt"])
         self.assertIn("Choose one of:", console.getvalue())
         self.assertIn("Run this URL again with your saved brief and feedback", console.getvalue())
+
+    def test_interrupted_review_keeps_the_completed_vote(self):
+        queue = rig.build_queue(rig.read_brief(rig.EXAMPLE_BRIEF), rig.read_json(rig.EXAMPLE / "corpus.json"))
+        console = StringIO()
+        with redirect_stdout(console), patch("builtins.input", side_effect=["n", "weak_evidence", KeyboardInterrupt]):
+            votes = interactive_votes(queue, rig)
+        self.assertEqual(votes, {queue["candidates"][0]["id"]: {"vote": "nay", "reason_code": "weak_evidence"}})
+        self.assertIn("Saving completed votes", console.getvalue())

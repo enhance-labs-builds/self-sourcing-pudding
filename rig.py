@@ -12,7 +12,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from treg_adapter import evidence_priority
+from treg_adapter import atomic_json, evidence_priority
 from url_seed import terminal_text
 
 
@@ -134,15 +134,24 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def queue_digest(queue):
+def queue_digest(queue, *, include_email=False):
+    if not include_email:
+        # Verification can finish after someone reviews the evidence.
+        queue = {**queue, "candidates": [
+            {key: value for key, value in row.items() if key != "work_email"} for row in queue["candidates"]
+        ]}
     data = json.dumps(queue, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(data).hexdigest()
 
 
-def replay_decisions(path, queue):
+def replay_decisions(path, queue, *, migrate=False):
     previous = read_json(path)
-    if previous.get("queue_sha256") != queue_digest(queue):
-        raise ValueError("These decisions belong to a different queue. Review the current queue.")
+    digest = queue_digest(queue)
+    if previous.get("queue_sha256") != digest:
+        if previous.get("queue_sha256") != queue_digest(queue, include_email=True):
+            raise ValueError("These decisions belong to a different queue. Review the current queue.")
+        if migrate:
+            atomic_json(path, {**previous, "queue_sha256": digest})
     return previous["decisions"]
 
 
@@ -483,14 +492,14 @@ def mark_example_emails(queue):
 
 def write_results(run, queue, decisions):
     results, shortlist = apply_reviews(queue, decisions)
-    write_json(run / "review.json", {
+    atomic_json(run / "review.json", {
         "as_of": queue["as_of"], "queue_sha256": queue_digest(queue),
         "decisions": decisions, "outcomes": results,
     })
     result = {"as_of": queue["as_of"], "leads": shortlist}
     if queue.get("mode") == "example":
         result["mode"] = "example"
-    write_json(run / "shortlist.json", result)
+    atomic_json(run / "shortlist.json", result)
     with (run / "shortlist.csv").open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
         writer.writeheader()

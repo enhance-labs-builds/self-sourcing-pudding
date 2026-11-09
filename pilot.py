@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import shlex
 from argparse import Namespace
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -46,6 +47,7 @@ def setup_commands(commands):
     review = steps.add_parser("review", help="record yay or nay and remember the reason")
     review.add_argument("--run", required=True)
     review.add_argument("--votes", type=Path, help="record decisions from a JSON file")
+    review.add_argument("--follow-ups", action="store_true", help="revisit candidates saved for follow-up in this run")
     steps.add_parser("status", help="show the approval and saved feedback")
     for step in (start, approve, run, review, steps.choices["status"]):
         step.add_argument("--project", type=Path, required=True)
@@ -234,6 +236,7 @@ def run_preview(args, state, rig, *, example=None):
     options = Namespace(searches=count, budget_usd=args.budget_usd,
                         profiles=args.profiles if args.profiles is not None else limit,
                         out=out, resume=args.resume, dry_run=args.dry_run, pages=args.pages, spider=args.spider,
+                        review_limit=limit,
                         results_per_search=args.results_per_search or (30 if args.batch else 12))
     if args.dry_run:
         if args.resume or args.corpus:
@@ -259,7 +262,7 @@ def run_preview(args, state, rig, *, example=None):
         queue = rig.read_json(out / "queue.json")
         previous_cards = queue, rig.read_json(out / "holds.json")["candidates"], previous["already_reviewed"]
         if (out / "review.json").exists():
-            previous_decisions = rig.replay_decisions(out / "review.json", queue)
+            previous_decisions = rig.replay_decisions(out / "review.json", queue, migrate=True)
 
     def prepare(corpus):
         if identities:
@@ -360,62 +363,67 @@ def interactive_votes(queue, rig):
     votes = {}
     if queue.get("mode") == "example":
         print("\nExample candidates. Profiles, posts and work emails below are fictional.")
-    for row in queue["candidates"]:
-        person = row["person"]
-        label = (f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
-                 else f"\n{row['sources'][0]['author']}")
-        print(terminal_text(label))
-        if person and person.get("employer_signal"):
-            print(terminal_text(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}"))
-        if person and (fit := person.get("company_fit")):
-            print(terminal_text(f"  Company fit · {fit['excerpt'][:400]}\n  {fit['source_url']}"))
-        if row.get("work_email", {}).get("status") == "verified":
-            print(f"Verified work email: {row['work_email']['address']}")
-        elif row.get("work_email", {}).get("status") == "example":
-            print(f"Example work email: {row['work_email']['address']}")
-        sources = [source for source in row["sources"] if not source["hold"]]
-        for i, source in enumerate(sources, 1):
-            print(terminal_text(
-                f"  {i}. {source['channel']} · {source.get('published_on') or 'date unknown'} · {source['url']}\n"
-                f"     {source['text'][:650]}"
-            ))
-            for discovery in source.get("found_by", []):
-                if discovery.get("lane") == "thread":
-                    print(terminal_text(f"     Found in the conversation on {discovery['seed_url']}"))
-                elif discovery.get("lane") == "employer":
-                    print(terminal_text(f"     Found by searching the employer of the author of {discovery['seed_url']}"))
-        action = input("[y] yay, [n] nay, Enter to skip, [q] save and quit: ").strip().lower()
-        if action == "q":
-            break
-        if action == "n":
-            print("Reasons: " + ", ".join(NAY_REASONS))
-            code = input("Reason code [weak_evidence]: ").strip() or "weak_evidence"
-            while code not in NAY_REASONS:
-                print("Choose one of: " + ", ".join(NAY_REASONS))
+    try:
+        for row in queue["candidates"]:
+            person = row["person"]
+            label = (f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
+                     else f"\n{row['sources'][0]['author']}")
+            print(terminal_text(label))
+            if person and person.get("employer_signal"):
+                print(terminal_text(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}"))
+            if person and (fit := person.get("company_fit")):
+                print(terminal_text(f"  Company fit · {fit['excerpt'][:400]}\n  {fit['source_url']}"))
+            if row.get("work_email", {}).get("status") == "verified":
+                print(f"Verified work email: {row['work_email']['address']}")
+            elif row.get("work_email", {}).get("status") == "example":
+                print(f"Example work email: {row['work_email']['address']}")
+            sources = [source for source in row["sources"] if not source["hold"]]
+            for i, source in enumerate(sources, 1):
+                print(terminal_text(
+                    f"  {i}. {source['channel']} · {source.get('published_on') or 'date unknown'} · {source['url']}\n"
+                    f"     {source['text'][:650]}"
+                ))
+                for discovery in source.get("found_by", []):
+                    if discovery.get("lane") == "thread":
+                        print(terminal_text(f"     Found in the conversation on {discovery['seed_url']}"))
+                    elif discovery.get("lane") == "employer":
+                        print(terminal_text(f"     Found by searching the employer of the author of {discovery['seed_url']}"))
+            action = input("[y] yay, [n] nay, Enter to skip, [q] save and quit: ").strip().lower()
+            if action == "q":
+                break
+            if action == "n":
+                print("Reasons: " + ", ".join(NAY_REASONS))
                 code = input("Reason code [weak_evidence]: ").strip() or "weak_evidence"
-            votes[row["id"]] = {"vote": "nay", "reason_code": code}
-        if action == "y":
-            qualify = input("Add to the shortlist using firsthand evidence? [y/N, Enter keeps for follow-up] ").strip().lower()
-            if qualify not in {"y", "yes"}:
-                votes[row["id"]] = {"vote": "yay", "reason": "Saved for follow-up. Firsthand evidence still needs review."}
-                continue
-            i = input("Which source proves the fit? [1] ").strip() or "1"
-            while not i.isascii() or not i.isdecimal() or not 1 <= int(i) <= len(sources):
-                i = input(f"Choose a source from 1 to {len(sources)}: ").strip()
-            source = sources[int(i) - 1]
-            body = source["text"].strip()
-            spans = re.split(r"\n+|(?<=[.!?])\s+", body)
-            first = next((span for span in spans if FIRSTHAND.search(span)), spans[0])
-            start = body.find(first) if len(body) > 240 else 0
-            suggested = body[start:start + 240].rstrip()
-            print(terminal_text(f"Suggested evidence: {suggested}"))
-            excerpt = input("Enter to use that evidence, or paste a different exact excerpt: ").strip() or suggested
-            while not excerpt or excerpt not in source["text"]:
-                excerpt = input("Paste an exact excerpt from that source: ").strip()
-            reason = rig.required_prompt("Why does this person fit the brief?")
-            kind = input("[p] firsthand problem, [w] explicit work [w]: ").strip()
-            votes[row["id"]] = {"vote": "yay", "source_id": source["id"], "excerpt": excerpt,
-                                "evidence_kind": "firsthand_problem" if kind == "p" else "explicit_work", "reason": reason}
+                while code not in NAY_REASONS:
+                    print("Choose one of: " + ", ".join(NAY_REASONS))
+                    code = input("Reason code [weak_evidence]: ").strip() or "weak_evidence"
+                votes[row["id"]] = {"vote": "nay", "reason_code": code}
+            if action == "y":
+                qualify = input("Add to the shortlist using firsthand evidence? [y/N, Enter keeps for follow-up] ").strip().lower()
+                if qualify not in {"y", "yes"}:
+                    votes[row["id"]] = {"vote": "yay", "reason": "Saved for follow-up. Firsthand evidence still needs review."}
+                    continue
+                i = input("Which source proves the fit? [1] ").strip() or "1"
+                while not i.isascii() or not i.isdecimal() or not 1 <= int(i) <= len(sources):
+                    i = input(f"Choose a source from 1 to {len(sources)}: ").strip()
+                source = sources[int(i) - 1]
+                body = source["text"].strip()
+                spans = re.split(r"\n+|(?<=[.!?])\s+", body)
+                first = next((span for span in spans if FIRSTHAND.search(span)), spans[0])
+                start = body.find(first) if len(body) > 240 else 0
+                suggested = body[start:start + 240].rstrip()
+                print(terminal_text(f"Suggested evidence: {suggested}"))
+                excerpt = input("Enter to use that evidence, or paste a different exact excerpt: ").strip() or suggested
+                while not excerpt or excerpt not in source["text"]:
+                    excerpt = input("Paste an exact excerpt from that source: ").strip()
+                reason = rig.required_prompt("Why does this person fit the brief?")
+                kind = input("[p] firsthand problem, [w] explicit work [w]: ").strip()
+                votes[row["id"]] = {"vote": "yay", "source_id": source["id"], "excerpt": excerpt,
+                                    "evidence_kind": "firsthand_problem" if kind == "p" else "explicit_work", "reason": reason}
+    except (EOFError, KeyboardInterrupt):
+        if not votes:
+            raise
+        print("\nReview interrupted. Saving completed votes.")
     return votes
 
 
@@ -429,7 +437,10 @@ def review(args, state, rig):
     rows = {row["id"]: row for row in queue["candidates"]}
     existing = out / "review.json"
     saved = rig.replay_decisions(existing, queue) if existing.exists() else {}
-    unreviewed = [row for row in queue["candidates"] if row["id"] not in saved]
+    unreviewed = [
+        row for row in queue["candidates"]
+        if (saved.get(row["id"], {}).get("decision") == "hold" if args.follow_ups else row["id"] not in saved)
+    ]
     if not args.votes and not unreviewed:
         print("No new candidates to review.")
     votes = rig.read_json(args.votes) if args.votes else interactive_votes({**queue, "candidates": unreviewed}, rig)
@@ -465,6 +476,11 @@ def review(args, state, rig):
     state["feedback"].update(updates)
     atomic_json(args.project / "state.json", state)
     print(f"Saved {len(updates)} votes for future runs.")
+    if any(decision["decision"] == "hold" for decision in decisions.values()):
+        entry = Path(__file__).resolve().with_name("rig.py")
+        command = shlex.join(["python3", str(entry), "pilot", "review", "--project", str(args.project.resolve()),
+                              "--run", args.run, "--follow-ups"])
+        print(f"Revisit candidates saved for follow-up with:\n  {command}")
 
 
 def execute(args, rig):

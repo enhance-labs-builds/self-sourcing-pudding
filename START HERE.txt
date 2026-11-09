@@ -16,8 +16,8 @@ Run it again with the same project and a new run name:
 Check that already reviewed evidence stays out of your second queue.
 The example can have an empty second queue once you review every card.
 
-For real LinkedIn and X searches with work emails, set up your own Treg
-token and team using README.md. Run the live command, then follow the
-printed command for a second pass. Each new pass has its own cap. If a
-run is interrupted, use the continuation command to resume it under
-its original cap.
+For real LinkedIn and X searches with work emails, open the live search
+section in README.md and set up your own Treg account. Use the same
+project to keep your brief and votes. Pudding asks how much you want to
+spend before running a live search. If a run is interrupted, use the
+printed continuation command to resume it under the same spend limit.

@@ -1,64 +1,61 @@
 # Self-Sourcing Pudding
 
-**Turn a company URL into a shortlist backed by real posts.**
+**Find leads already talking about the problem you solve.**
 
-Pudding drafts an editable sourcing brief from a company site. Approve who you want to find and what they'd be talking about, then search LinkedIn and X for people doing that work. Review the evidence and save your votes for the next run.
+Self-Sourcing Pudding is an open-source lead discovery tool for teams that use AI to find their next customers. Start with your company website. Pudding drafts who to look for, what problem they’re working on, and what they might say about it. Edit or approve that brief, then search public posts on LinkedIn and X for people to review.
 
-| Start with | Get back |
-| --- | --- |
-| A public company URL | A draft brief with the target roles, workflow, and search phrases |
-| An approved brief | Up to 20 people to review, with dated posts, LinkedIn profiles, and verified work emails when available |
-| A yay or nay | A saved decision. Future runs skip evidence you've already reviewed and can surface someone again when there's new evidence. |
+[See the sample CSV](examples/preview-environments/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Run a live search](#search-linkedin-and-x-for-real-leads)
 
-## Quick start
+## See why a lead made the list
 
-You need **Python 3.11+** on **macOS or Linux**. Clone the repo or download the [tester ZIP](https://github.com/enhance-labs-builds/self-sourcing-pudding/releases/download/v0.1.0/self-sourcing-pudding-tester.zip).
+Say you sell a tool that helps teams test changes before they ship. In the fictional demo, Nia Alder, a platform engineer, writes:
+
+> I maintain the preview deploy for our app team. Builds fail after a database reset, and I spent Friday restoring previews so the team could review changes.
+
+That gives you a reason to look up Nia and something specific to talk about. You decide who makes the shortlist. Each run saves a CSV with the person’s profile, the dated post, and the quote behind your decision. A later run can bring them back when there’s new evidence.
+
+## Try it with your own URL
+
+The free walkthrough reads your public website to draft the brief. You’ll practise reviewing fictional candidates for **US$0**, without a Treg account. You’ll need **Python 3.11+** on **macOS or Linux**.
+
+### With an AI agent
+
+Paste this into an AI agent that can run commands on your computer. Replace `<my company URL>` with your website.
+
+> Open https://github.com/enhance-labs-builds/self-sourcing-pudding and check that I have Python 3.11 or newer. Set up Pudding and start the free walkthrough with `<my company URL>`. Show me the draft brief and let me edit or approve it. Walk me through reviewing two fictional candidates and show me where the shortlist CSV is saved. Keep the run free.
+
+### In Terminal
 
 ```sh
 git clone https://github.com/enhance-labs-builds/self-sourcing-pudding.git
 cd self-sourcing-pudding
-python3 rig.py demo
-```
-
-The demo runs offline and produces a two-person fictional shortlist at `runs/demo/shortlist.csv`. One person describes a deployment failure in their own words and shows up in both the LinkedIn and X fixtures. The shortlist keeps the evidence with their profile.
-
-## Use your own URL
-
-From the checkout, run the guided setup and paste your company URL. In the tester ZIP, follow `START HERE.txt`.
-
-```sh
 bash install.sh --project runs/my-company
 ```
 
-Edit or approve the brief and vote on a few fictional candidates. The walkthrough reads your public site to draft the brief and costs **US$0**. If the draft needs more context, fill in the workflow, who owns it, and the phrases they use. Pudding prints the command for another pass with the same project. The brief and votes stay in that project folder.
+Paste your company URL when prompted. When the site leaves gaps, Pudding asks who owns the work, how they talk about it, and which companies or alternatives matter. Review the queries before approving. After the review, Pudding prints the command for another pass with the same brief and votes.
 
-## Live LinkedIn and X
+You can also download `self-sourcing-pudding-tester.zip` from [GitHub Releases](https://github.com/enhance-labs-builds/self-sourcing-pudding/releases), unzip it, and open `START HERE.txt`.
 
-Use your own [Treg team and token](https://treg.to/docs) with prepaid balance and no connected provider keys or custom tools. In the terminal where you installed Pudding, set:
+### Run the offline demo
 
-```sh
-export TREG_ORG='your-team-slug'
-printf 'Treg API token: '
-read -rs TREG_TOKEN
-printf '\n'
-export TREG_TOKEN
+Clone the repo as above and run `python3 rig.py demo` from the repository folder. This recreates the [sample CSV](examples/preview-environments/shortlist.csv) at `runs/demo/shortlist.csv` without any network access.
 
-.pudding/bin/pudding walk --project runs/my-company --live --budget-usd 0.50
-```
+## Search LinkedIn and X for real leads
 
-The cap covers searches, role checks, and work email lookups. Preview size depends on the evidence, budget, and available provider results. X authors go into the research queue until you can link them to a verified LinkedIn profile. Keep live run folders private.
+Run a live search whenever you want fresh leads. Pudding uses Treg for searches, role checks, and work email lookup. New Treg accounts can start with **US$1 in credit**. Usage draws from your Treg balance. [Treg pricing](https://treg.to/pricing) · [Set up Treg and run a live search](docs/guide.md#run-a-live-search)
 
-After review, use the printed command for a new pass, or add `--run live-pass-2` to the command above. Each new run has its own cap.
+Pudding starts with public posts about the workflow or a competitor in your brief. It checks a promising LinkedIn thread for comments and a promising X thread for replies, then looks for coworkers when a post connects the work to a verified employer. A short reply can move up for review when the person's company fits your brief. Shortlisting still takes evidence from that person. [How Pudding follows posts and employers](docs/guide.md#follow-posts-and-employers)
 
-If the run is interrupted, repeat the continuation command with the same project, run name, cap, and token. Pudding reuses settled calls and can recover a pending response using [Treg's replay contract](https://treg.to/skill.md#retrying-without-paying-twice). If it can't safely recover the result, it pauses the run.
+Choose your spend limit and use `--target` to set the maximum number of candidates to review. A candidate makes the shortlist after you confirm firsthand evidence. Pudding includes verified work emails when available. When a search turns up few good fits, tune the brief with words practitioners use to describe their work and run it again.
 
-Pudding is an independent client of the hosted Treg API. Treg provides access to upstream services, and live use is subject to the [Treg terms](https://treg.to/terms) and the applicable provider terms.
+After your first live review, open `runs/my-company/runs/live-preview/shortlist.csv`. Pudding prints a command for another pass with the same brief and votes. The next pass skips people whose evidence you’ve already reviewed.
 
 ## Go further
 
-- [Guide](docs/guide.md) covers editing a brief, qualifying candidates, running a larger batch, and using your own offline records.
-- [Example briefs](examples/) show how to search for a problem, a competitor plus a workflow, or evidence in customer stories.
-- For bug reports, include the command, Python version, and any redacted error output. Use fictional records to share a reproducible example.
+- [Read the guide](docs/guide.md#start-from-a-company-url) to import an existing brief, match an X author to a LinkedIn profile, check spend, or run a larger batch.
+- [Bring your own records](docs/guide.md#bring-your-own-offline-records) to build a shortlist offline.
+- [Browse example briefs](examples/) to see how to search for a competitor alongside the workflow it’s used for.
+- If you open an issue, include your command, Python version, and redacted output. Keep live run folders private.
 - Run `python3 -m unittest discover -s tests` to check changes locally.
 
-MIT licensed. See [LICENSE](LICENSE).
+Pudding is an independent client of the [hosted Treg API](https://treg.to/docs). Live use is subject to the [Treg terms](https://treg.to/terms) and applicable provider terms. The project is [MIT licensed](LICENSE).

@@ -56,6 +56,8 @@ class PilotTest(TestCase):
                              {c["id"] for c in rig.read_json(second / "queue.json")["candidates"]})
             run("run", "--run", "batch", "--corpus", str(path), "--batch")
             self.assertEqual(rig.read_json(project / "runs/batch/preview.json")["candidates"], 1)
+            run("run", "--run", "custom", "--corpus", str(path), "--target", "3")
+            self.assertEqual(rig.read_json(project / "runs/custom/preview.json")["max_candidates"], 3)
             draft = project / "brief.toml"
             draft.write_text(draft.read_text().replace("batch_target = 1", "batch_target = 2"))
             with self.assertRaises(SystemExit) as edited:

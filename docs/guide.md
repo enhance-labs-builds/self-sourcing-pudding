@@ -31,25 +31,25 @@ python3 rig.py pilot review --project runs/boat --run preview
 python3 rig.py pilot status --project runs/boat
 ```
 
-`start` reads the site's public copy, social links and comparison links. It proposes roles and search phrases when the copy supports a starting hypothesis. For other sites, fill in the buyer and workflow in `brief.toml`. Use `--starter` to import a researched brief, or `--website` when your starting LinkedIn or X URL needs a public company site. Review or edit the draft before approval. Any later edit to the brief's settings needs a new approval.
+`start` reads the site's public copy, social links and comparison links. It proposes roles and search phrases when the copy supports a starting hypothesis. The guided `walk` asks for the workflow, roles and search phrases when the draft needs them. You can also add competitors and phrases that describe companies you want to prioritize. Use `--starter` with `pilot start` to import a researched brief, or `--website` when your starting LinkedIn or X URL needs a public company site. Review or edit the draft before approval. Any later edit to the brief's settings needs a new approval.
 
-The preview shows up to 20 people with a current LinkedIn role and dated source. `holds.json` contains candidates with an identity or freshness gap. To include an X author in the preview, supply a reviewed identity match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
+The preview defaults to at most 20 people with a current LinkedIn role and dated source. Use `--target` to choose your own review limit. `holds.json` contains candidates with an identity or freshness gap. Follow-up search can resolve some X authors automatically. You can also supply a reviewed match with `--identities` or add it to an offline corpus. An identities file is a JSON array with `source_url`, `author`, `profile_url`, `name`, `role`, `company`, `role_checked_on`, `binding_source`, and `role_source` on each row. Use the exact post URL and author from the corpus. `binding_source` and `role_source` should point to the public evidence for the identity match and the current role. You can replay a paid run locally with `--corpus path/to/corpus.json`.
 
-Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. `pilot run --batch` uses `limits.batch_target` from the approved brief, starting at 100. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The approved target and spend cap bound the run. The pilot is run on demand.
+Review saves yay/nay with evidence or a reason. A yay can keep someone for follow-up, or add them to the shortlist if you select firsthand evidence. The next run skips evidence you've already voted on and can surface a person again when they publish new evidence. A wrong role or wrong account vote also suppresses further results for that same role or account. `preview.json` records spend and whether each channel completed. For a recurring batch size, set `limits.batch_target` in the brief and use `pilot run --batch`. Tune query count with `--searches`, role lookups with `--profiles`, and search depth with `--pages` and `--results-per-search`. The target and spend limit are ceilings. The pilot is run on demand.
 
-Live pilot runs also look up work emails for review candidates whose current roles match the brief. The rig checks the website listed on the person's current LinkedIn company page, then independently verifies any address that matches that domain. Review shows verified emails as soon as the run finishes and carries them into the shortlist. The same spend cap covers discovery, role checks, and email. Use `--no-email` to spend the cap on discovery and role checks alone. For a reviewed X identity, include the current employer's LinkedIn `company_url` in `--identities` to make it eligible for email lookup. Keep run folders private.
+Live pilot runs look up work emails for review candidates whose current roles match the brief. With follow-up search enabled, people with strong firsthand evidence are also eligible. Pudding checks the website listed on the person's current LinkedIn company page, then independently verifies any address that matches that domain. Review shows verified emails as soon as the run finishes and carries them into the shortlist. The same spend limit covers discovery, role checks, and email. Use `--no-email` to spend it on discovery and role checks alone. For a reviewed X identity, include the current employer's LinkedIn `company_url` in `--identities` to make it eligible for email lookup. Keep run folders private.
 
 ### Draft a brief with a browsing-enabled agent
 
 In a browsing-enabled coding agent, open this repository and ask:
 
-> Use this public company URL as the seed for a sourcing run: `<company URL>`. Follow the link to its official site, read the product copy and public posts, and draft an editable brief for prospective users. Show the inferred customer profile, public search signals, and qualification criteria. Search LinkedIn and X with the rig under a US$0.10 cap. Shortlist people only when you can verify their current role and first-person evidence of the work.
+> Use `<company URL>` to draft an editable sourcing brief. Read the official site and relevant public posts. Show who does the work, how they talk about it, alternatives they use, and what makes their company a fit. Ask me to approve or edit the brief and choose a spend limit. Then search LinkedIn and X. Shortlist people only when you can verify their current role and evidence of the work in their own words.
 
 Start with the company's public LinkedIn page, X (Twitter) profile, or website. Use the official site to check that the profiles belong to the right company. Search the company name for customer examples, then search the problem language and alternatives for people outside the company's audience. Treat customer segments as hypotheses and use candidate evidence to decide who qualifies. The agent drafts the brief and reviews candidates. The CLI runs discovery and records evidence, spend, and decisions. Live discovery uses the Treg setup below.
 
 The [Boat brief](../examples/boat-sandboxes/brief.toml) shows how the public company profile and product site translate into an editable sourcing brief. Edit its target roles and qualification criteria to steer who makes the shortlist. Edit the ordered `[[searches]]` entries to steer what the rig looks for: `problem`, `brand`, `alternative`, or `account`. For example, Boat lists Daytona as an alternative and searches the more specific phrase `Daytona sandbox`.
 
-Run `live --dry-run` with your brief, output path, and budget to see the exact queries before spending. The rig runs the first four explicit queries on both channels by default, keeps posts containing the relevant phrase, and records what found each post. `--searches` lets you run fewer. Briefs without an explicit search plan still use the keyword defaults.
+In a URL draft, edit `signals` and `alternatives` to regenerate queries. Alternatives are paired with workflow phrases from the same brief. Add explicit `[[searches]]` entries to take control of the query order and wording. Run `live --dry-run` with your brief, output path and budget to see the queries before spending. The direct `live` command runs the first four planned queries by default. `--searches` lets you run fewer.
 
 ## Find people working with alternatives
 
@@ -73,15 +73,29 @@ Use a verified story to improve the next social query. With `lane = "account"`, 
 
 The [Heidi](../examples/blackbird/heidi.toml), [Dovetail](../examples/blackbird/dovetail.toml), and [Lorikeet](../examples/blackbird/lorikeet.toml) briefs show the same approach across three markets.
 
-## Try a capped live run
+## Run a live search
 
-The live adapter uses the [hosted Treg API](https://treg.to/docs) on macOS and Linux. Use a Treg team with prepaid balance and no connected provider keys or custom tools. The adapter checks this up front so charges go through Treg's metered route. Each tester supplies their own team slug and API token through `TREG_ORG` and `TREG_TOKEN`. Keep tokens out of the brief and repository.
+Sign in to the [Treg dashboard](https://treg.to/app?ref=docs). Use a team with prepaid balance and no custom provider keys or tools. You can add one [Treg-managed read-only X connection](#include-x-quote-posts). Copy the team slug and create an API key for that team. Pudding uses that key as its token. Keep it out of the brief and repository.
+
+Set these in the terminal where you’ll run Pudding. Paste your token at the prompt and press Enter.
 
 ```sh
 export TREG_ORG='your-team-slug'
+printf 'Treg API token: '
 read -rs TREG_TOKEN
+printf '\n'
 export TREG_TOKEN
+```
 
+From the repository folder, start a live search with your walkthrough project. Pudding asks how much to spend before it runs paid searches. You can also supply `--budget-usd` up front. Use `--target` to pick the maximum number of people to review.
+
+```sh
+.pudding/bin/pudding walk --project runs/my-company --live
+```
+
+To run the example brief directly from the command line, use the following commands:
+
+```sh
 python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
   --out runs/first-live --budget-usd 0.10 --dry-run
 python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
@@ -89,11 +103,37 @@ python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
 python3 rig.py review --run runs/first-live
 ```
 
-The `live --dry-run` command prints the search plan without credentials or network access. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--profiles` to adjust that limit. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile. This version searches posts and leaves comment and reply expansion to a future adapter update.
+The `live --dry-run` command prints the search plan without credentials or network access. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--profiles` to adjust that limit. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile.
+
+If the first preview is thin, check `preview.json` for LinkedIn and X coverage and `holds.json` for evidence or identity gaps. When the searches completed and the results are still off, edit the brief before the next run. Use phrases you saw practitioners use in their own posts, pair an alternative with a concrete workflow, and describe the kinds of companies you want to find. Review and approve the revised brief, then use a new run name in the same project to keep your votes.
 
 The run saves settled charges and Treg call IDs in `treg-run.json`. After an interruption, rerun the same walkthrough command with the same project, run name, cap and token. For `live` or `pilot run`, repeat the original command with `--resume`. Pudding reuses completed calls and follows [Treg's replay contract](https://treg.to/skill.md#retrying-without-paying-twice) for a pending request: it sends the original key and counts the original charge once, with no extra charge for a replay. If Treg is still processing, wait briefly and resume again. If Pudding cannot safely replay the result (for example, the run is more than 23 hours old or Treg didn't retain the result), it keeps the reservation and stops sending paid requests for that run. Check Treg Activity for the receipt. Keep live run folders private and use the fictional demo when sharing example outputs.
 
 Self-Sourcing Pudding is an independent client of Treg. Treg provides the upstream access. See the [Treg terms](https://treg.to/terms) and the applicable upstream terms for use of live data.
+
+### Follow posts and employers
+
+The live walkthrough follows promising threads and employers by default. Use `--no-spider` to run the initial search alone. With `pilot run` or `live`, add `--spider` to include follow-up searches.
+
+```sh
+.pudding/bin/pudding walk --project runs/my-company --live --target 12
+```
+
+Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. It checks promising authors' current roles. To search for coworkers, it looks for firsthand wording that names the confirmed employer in the passage describing the work. Clear client and side-project wording leaves the employer search on hold. Pudding follows up to two employers and retains the source link and the passage that led there.
+
+Set `company_signals` in the brief to describe companies that deserve a closer look, for example `["municipal fleet", "fleet maintenance"]`. Pudding can check up to three verified employers' public LinkedIn descriptions. It records the matching passage and link. This can lift someone who left a short reply even when nobody else at their company has posted about the work. The shortlist still needs current evidence from that person's own words.
+
+For a few promising X authors, Pudding checks whether their public profile links directly to LinkedIn, then compares the names and verifies the LinkedIn role. Unresolved identities stay on hold. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Use the printed continuation command after an interruption.
+
+#### Include X quote posts
+
+Treg already provides X search and replies through AnyAPI. To include quote posts, connect X on the same Treg team and choose **Read** access. If you use the Treg CLI, run:
+
+```sh
+treg connections connect --provider x --capability read
+```
+
+Approve access in X and start a new `--spider` run. Pudding checks that Treg meters the connection to your team balance before requesting up to one page of quote posts for the selected X post. It verifies that each result quotes the original post and keeps the original link for review.
 
 ## Bring your own offline records
 

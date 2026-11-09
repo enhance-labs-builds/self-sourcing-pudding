@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from treg_adapter import evidence_priority
+
 
 EXAMPLE = Path(__file__).resolve().parent / "examples" / "preview-environments"
 CHANNELS = {"linkedin", "x"}
@@ -52,6 +54,24 @@ def read_brief(path):
         brief[key] = nonempty(brief.get(key), key)
     for key in ("target_roles", "signals", "alternatives", "exclusions"):
         brief[key] = values(brief.get(key, []), key, key in {"target_roles", "signals"})
+    if "company_signals" in brief:
+        brief["company_signals"] = values(brief["company_signals"], "company_signals", required=False)
+    if brief.get("derive_searches") is True and "searches" not in brief:
+        signals = brief["signals"]
+        comparisons = brief.get("comparison_sources", {})
+        if not isinstance(comparisons, dict):
+            raise ValueError("Use a [comparison_sources] table with URLs by competitor.")
+        problem_searches = [{"lane": "problem", "phrase": phrase} for phrase in signals]
+        signal_names = {phrase.casefold() for phrase in signals}
+        alternatives = []
+        for name in brief["alternatives"]:
+            if name.casefold() in signal_names:
+                continue
+            search = {"lane": "alternative", "phrase": name, "workflow": signals[:3]}
+            if name in comparisons:
+                search["seed_url"] = comparisons[name]
+            alternatives.append(search)
+        brief["searches"] = problem_searches[:2] + alternatives + problem_searches[2:]
     if "searches" in brief:
         searches = brief["searches"]
         if not isinstance(searches, list) or not searches:
@@ -169,6 +189,8 @@ def show_plan(brief):
     print(f"Prioritize roles: {', '.join(brief['target_roles'])}")
     print(f"Search signals: {', '.join(brief['signals'])}")
     print(f"Alternatives: {', '.join(brief['alternatives']) or '(none)'}")
+    if brief.get("company_signals"):
+        print(f"Company fit: {', '.join(brief['company_signals'])}")
     if "searches" in brief:
         print("Live queries for LinkedIn and X, in priority order:")
         for search in brief["searches"]:
@@ -246,6 +268,9 @@ def build_queue(brief, corpus, as_of=None):
     matches = {}
     source_urls = set()
     terms = discovery_terms(brief)
+    employer_terms = list(dict.fromkeys([
+        *terms, *(term for search in brief.get("searches", []) for term in search.get("workflow", [])),
+    ]))
     for key, source in observations.items():
         if source["channel"] not in CHANNELS or source["kind"] not in SOURCE_KINDS:
             raise ValueError(f"Unsupported channel or source type for {key}.")
@@ -254,7 +279,8 @@ def build_queue(brief, corpus, as_of=None):
             raise ValueError(f"Duplicate source URL: {url}")
         source_urls.add(url)
         nonempty(source["author"], "source author")
-        matches[key] = match_terms(nonempty(source["text"], "source text"), terms)
+        from_followup = any(item.get("lane") in {"employer", "thread"} for item in source.get("found_by", []))
+        matches[key] = match_terms(nonempty(source["text"], "source text"), employer_terms if from_followup else terms)
         if source.get("person_id") is not None and source["person_id"] not in people:
             raise ValueError(f"{key} points to an unknown person.")
         parent = source.get("parent_id")
@@ -294,10 +320,7 @@ def build_queue(brief, corpus, as_of=None):
             "hold": age_hold(source.get("published_on"), as_of, limits["source_age_days"], "Source"),
         })
 
-    ranked = sorted(candidates.values(), key=lambda row: (
-        bool(candidate_hold(row)), not row["role_matches"],
-        not any(source["matches"] for source in row["sources"]), row["id"],
-    ))
+    ranked = sorted(candidates.values(), key=lambda row: (not candidate_hold(row), candidate_priority(row)), reverse=True)
     return {"schema_version": 1, "as_of": as_of.isoformat(), "brief": brief, "candidates": ranked}
 
 
@@ -309,6 +332,15 @@ def candidate_hold(candidate):
             return candidate["sources"][0]["hold"]
         return "No current source in the queue. Check the dates on this candidate's sources."
     return None
+
+
+def candidate_priority(candidate):
+    sources = [source for source in candidate["sources"] if not source["hold"]]
+    evidence = [evidence_priority(source["text"], source["matches"]) for source in sources]
+    person = candidate["person"] or {}
+    employer = bool(person.get("employer_signal") or person.get("company_fit"))
+    return (max(max(evidence, default=0), int(employer)), evidence.count(2), employer, bool(candidate["role_matches"]),
+            sum(score > 0 for score in evidence), max((source["published_on"] for source in sources), default=""))
 
 
 def interactive_review(queue):
@@ -487,11 +519,12 @@ def main(argv=None):
     live = commands.add_parser("live", help="build a review queue from public posts using Treg")
     live.add_argument("--brief", type=Path, default=Path("brief.toml"))
     live.add_argument("--out", type=Path, required=True)
-    live.add_argument("--budget-usd", required=True, help="maximum Treg spend for this run, up to $1")
+    live.add_argument("--budget-usd", required=True, help="maximum Treg spend for this run in USD")
     live.add_argument("--searches", type=int, choices=range(1, 5), metavar="1–4",
                       help="queries per channel (default: up to four from an explicit plan, otherwise two)")
     live.add_argument("--profiles", type=int, choices=range(11), default=4, metavar="0–10",
                       help="maximum independent LinkedIn role lookups")
+    live.add_argument("--spider", action="store_true", help="follow threads and search relevant employers")
     live.add_argument("--dry-run", action="store_true", help="preview the queries and cap offline")
     live.add_argument("--resume", action="store_true", help="reuse settled calls and recover any pending call in the same run")
     review = commands.add_parser("review", help="review a queue and export a shortlist")

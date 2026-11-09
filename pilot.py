@@ -36,6 +36,8 @@ def setup_commands(commands):
     run.add_argument("--results-per-search", type=int, choices=range(1, 51), metavar="1–50",
                      help="results to examine per page on both channels")
     run.add_argument("--batch", action="store_true", help="use the approved full batch target")
+    run.add_argument("--target", type=int, metavar="1–500", help="maximum people to review in this run")
+    run.add_argument("--spider", action="store_true", help="follow threads and search relevant employers")
     run.add_argument("--no-email", action="store_true", help="skip work email lookup and verification")
     run.add_argument("--resume", action="store_true", help="continue the same live run and recover any pending call")
     run.add_argument("--corpus", type=Path, help="preview previously collected records offline")
@@ -49,7 +51,7 @@ def setup_commands(commands):
     return steps
 
 
-def draft(seed, target):
+def draft(seed, target, *, ask=None):
     description = seed["description"]
     host = urlsplit(seed["website"]).hostname
     data = {
@@ -59,33 +61,40 @@ def draft(seed, target):
         "target_roles": ["Choose who owns this workflow"],
         "signals": [host],
         "alternatives": list(seed.get("comparisons", {})),
+        "company_signals": [],
+        "derive_searches": True,
         "exclusions": ["Vendor announcements without firsthand evidence"],
         "qualifies": "The person describes doing, operating, or evaluating the workflow for their team.",
         "more_like": "A practitioner describes their team's work and a concrete constraint.",
         "less_like": "Someone repeats a product announcement without describing their own work.",
     }
     text = f"{seed['title']} {description} {seed.get('headings', '')}".lower()
-    workflow = []
     if "agent" in text and ("sandbox" in text or re.search(r"\bvms?\b", text)):
         data["problem"] = "Teams running AI agents need isolated execution with the tooling and persistence their workloads require."
         data["target_roles"] = ["Platform Engineer", "Infrastructure Engineer", "Engineering Lead", "CTO", "Founder"]
         data["signals"] = ["agent sandbox", "sandbox infrastructure", "persistent sandbox", "AI agents"]
-        workflow = ["sandbox", "coding agent", "code execution"]
     elif ("onboarding" in text or "implementation" in text) and ("customer" in text or "user" in text):
         data["problem"] = "Customer teams need to guide new users through setup and adoption without a live call for every account."
         data["target_roles"] = ["Head of Customer Success", "Director of Customer Success", "Customer Onboarding Lead", "Implementation Manager", "Product Growth Lead"]
         data["signals"] = ["customer onboarding", "guided onboarding", "onboarding calls", "time to value"]
         data["qualifies"] = "The person owns customer onboarding or adoption and describes a bottleneck, an experiment, or a rollout their team is working on."
-        workflow = ["customer onboarding", "activation", "guided setup"]
+    elif ask:
+        print(f"\n{seed['title']}\n{description}\n{seed['website']}")
+        print("Use what you know about the people who do this work to finish the brief.")
+        data["problem"] = ask("What problem or workflow should we look for?", required=True)
+        data["target_roles"] = ask("Who does or owns that work? Separate roles with commas.", required=True, split=True)
+        data["signals"] = ask("What phrases would they use in a post? Separate them with commas.", required=True, split=True)
+        alternatives = ask("Any competitors or workarounds to search? Separate them with commas.", split=True)
+        data["alternatives"] = list(dict.fromkeys(data["alternatives"] + alternatives))
+        data["company_signals"] = ask("What kinds of companies should move up for review? Enter phrases or leave blank.",
+                                      split=True)
     lines = ["# Roles, problem and search terms are hypotheses. Edit them before approval.",
+             "# Use company_signals for phrases you would expect to see on a relevant employer’s public profile.",
              *[f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in data.items()]]
-    if workflow:
-        for term in data["signals"][:2]:
-            lines.extend(("", "[[searches]]", 'lane = "problem"', f'phrase = "{term}"'))
-        for competitor in data["alternatives"][:3]:
-            lines.extend(("", "[[searches]]", 'lane = "alternative"', f'phrase = "{competitor}"',
-                          f"workflow = {json.dumps(workflow)}",
-                          f'seed_url = "{seed["comparisons"][competitor]}"'))
+    if seed.get("comparisons"):
+        lines.extend(("", "[comparison_sources]"))
+        for competitor, source in seed["comparisons"].items():
+            lines.append(f"{json.dumps(competitor, ensure_ascii=False)} = {json.dumps(source)}")
     lines.extend(("", "[limits]", "source_age_days = 45", "role_age_days = 30",
                   "shortlist_size = 20", f"batch_target = {target}"))
     return "\n".join(lines) + "\n"
@@ -104,7 +113,7 @@ def start_project(args, rig, *, seed=None, show=True):
             body = re.sub(r"(?m)^\[limits\]\s*$", f"[limits]\nbatch_target = {args.target}", body, count=1)
         body = re.sub(r"(?m)^shortlist_size\s*=.*$", "shortlist_size = 20", body, count=1)
     else:
-        body = draft(seed, args.target)
+        body = draft(seed, args.target, ask=getattr(args, "ask", None))
     args.project.mkdir(mode=0o700, parents=True)
     (args.project / ".gitignore").write_text("*\n", encoding="utf-8")
     (args.project / "runs").mkdir()
@@ -188,18 +197,15 @@ def select_preview(queue, feedback, limit, rig, *, example=False):
             row = {**row, "hold": "The author has no verified LinkedIn profile."}
         (held if rig.candidate_hold(row) else known).append(row)
     # Keep the person with attributable, current evidence ahead of a name needing research.
-    known.sort(key=lambda row: (
-        bool(row["role_matches"]),
-        any(FIRSTHAND.search(source["text"]) for source in row["sources"] if not source["hold"]),
-        max(source["published_on"] for source in row["sources"] if not source["hold"]),
-    ), reverse=True)
+    known.sort(key=rig.candidate_priority, reverse=True)
     return known[:limit], held, seen
 
 
 def channel_status(ledger, adapter):
     coverage = {}
     for channel, endpoint in (("linkedin", adapter.LINKEDIN), ("x", adapter.X)):
-        calls = [call for call in ledger["calls"].values() if call["endpoint"] == endpoint]
+        calls = [call for call in ledger["calls"].values()
+                 if call["endpoint"] == endpoint and not call["params"].get("authorsCompany")]
         ok = sum("result" in call for call in calls)
         planned = len(ledger["plan"]["terms"])
         if channel == "linkedin":
@@ -212,17 +218,22 @@ def channel_status(ledger, adapter):
 def run_preview(args, state, rig, *, example=None):
     import treg_adapter
 
+    if args.spider and (args.corpus or example is not None):
+        raise ValueError("Use --spider with a live search.")
     brief = rig.read_brief(args.project / "brief.toml")
     version = brief_version(brief)
     if not state["approval"] or state["approval"]["version"] != version:
         raise ValueError("Approve the current brief before running a preview.")
     out = run_path(args.project, args.run)
-    limit = brief["limits"]["batch_target"] if args.batch else 20
+    target = getattr(args, "target", None)
+    if target is not None and (args.batch or not 1 <= target <= 500):
+        raise ValueError("Use --target from 1 to 500 without --batch.")
+    limit = target if target is not None else brief["limits"]["batch_target"] if args.batch else 20
     previous = rig.read_json(out / "preview.json") if (out / "preview.json").exists() else None
     recovering_email = previous and previous["mode"] == "live" and previous.get("pending_spend_usd")
     if out.exists() and (not args.resume or (previous and not recovering_email) or args.corpus or example is not None):
         raise ValueError("Choose a fresh run name. Resume is for interrupted live runs.")
-    if recovering_email and (previous["brief_version"] != version or args.no_email):
+    if recovering_email and (previous["brief_version"] != version or previous["max_candidates"] != limit or args.no_email):
         raise ValueError("Resume work email using the original approved brief and run options.")
     run_brief = {**brief, "limits": {**brief["limits"], "shortlist_size": limit}}
     identities = rig.read_json(args.identities) if args.identities else None
@@ -259,13 +270,19 @@ def run_preview(args, state, rig, *, example=None):
         count = args.searches or min(len(brief.get("searches", [])) or 2, 20)
         options = Namespace(searches=count, budget_usd=args.budget_usd,
                             profiles=args.profiles if args.profiles is not None else limit,
-                            out=out, resume=args.resume, dry_run=False, pages=args.pages,
+                            out=out, resume=args.resume, dry_run=False, pages=args.pages, spider=args.spider,
                             results_per_search=args.results_per_search or (30 if args.batch else 12))
         corpus = run_live(run_brief, options, rig.match_terms, rig.discovery_terms(run_brief),
                           enrich=None if args.no_email else enrich)
         ledger = rig.read_json(out / "treg-run.json")
         stats = {"mode": "live", "spend_usd": billing(ledger) / 1_000_000,
                  "channels": channel_status(ledger, treg_adapter)}
+        if args.spider:
+            stats["followup_sources"] = sum(
+                any(entry.get("lane") in {"thread", "employer"} for entry in source.get("found_by", []))
+                for source in corpus["observations"]
+            )
+            print(f"Follow-up searches found {stats['followup_sources']} sources for the same review queue.")
         pending = sum(call["reserved_micro"] for call in pending_calls(ledger).values())
         if pending:
             stats["pending_spend_usd"] = pending / 1_000_000
@@ -341,6 +358,11 @@ def interactive_votes(queue):
         person = row["person"]
         print(f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
               else f"\n{row['sources'][0]['author']}")
+        if person and person.get("employer_signal"):
+            print(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}")
+        if person and (fit := person.get("company_fit")):
+            excerpt = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", fit["excerpt"][:400])
+            print(f"  Company fit · {excerpt}\n  {fit['source_url']}")
         if row.get("work_email", {}).get("status") == "verified":
             print(f"Verified work email: {row['work_email']['address']}")
         elif row.get("work_email", {}).get("status") == "example":
@@ -350,6 +372,11 @@ def interactive_votes(queue):
             excerpt = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", source["text"][:650])
             print(f"  {i}. {source['channel']} · {source.get('published_on') or 'date unknown'} · {source['url']}\n"
                   f"     {excerpt}")
+            for discovery in source.get("found_by", []):
+                if discovery.get("lane") == "thread":
+                    print(f"     Found in the conversation on {discovery['seed_url']}")
+                elif discovery.get("lane") == "employer":
+                    print(f"     Found by searching the employer of the author of {discovery['seed_url']}")
         action = input("[y] yay, [n] nay, Enter to skip, [q] save and quit: ").strip().lower()
         if action == "q":
             break

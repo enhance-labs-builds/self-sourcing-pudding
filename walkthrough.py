@@ -5,7 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from argparse import Namespace
+from argparse import BooleanOptionalAction, Namespace
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -22,7 +22,9 @@ def setup_command(commands):
     walk.add_argument("--project", type=Path, help="folder to save or continue the walkthrough")
     walk.add_argument("--run", help="choose a new run name to try a revised brief in the same project")
     walk.add_argument("--live", action="store_true", help="use Treg for a real preview")
+    walk.add_argument("--spider", action=BooleanOptionalAction, help="follow threads and employers (on for live runs)")
     walk.add_argument("--budget-usd", help="total cap for a live run")
+    walk.add_argument("--target", type=int, metavar="1–500", help="maximum people to review (default 20)")
 
 
 def example_corpus(brief):
@@ -38,9 +40,9 @@ def example_corpus(brief):
          "profile_url": "https://profiles.example/val-quill", "role_checked_on": today},
     ]
     examples = [
-        ("linkedin", "nia", "Nia Alder", f"We run {term} for new accounts. The handoff still takes our team two calls per account, so we're testing a guided setup for the next cohort."),
-        ("x", "nia", "@nia-example", f"Our team is measuring how long {term} takes before and after our guided setup pilot."),
-        ("linkedin", "devon", "Devon Flint", f"I own {term} at Mothsignal. We've shipped a self-serve path and are comparing completion rates with the previous manual process."),
+        ("linkedin", "nia", "Nia Alder", f"I own {term} on my team. A manual step failed last week and it took me two hours to trace what happened."),
+        ("x", "nia", "@nia-example", f"Our team is measuring how much time we spend on {term} after changing one step in the workflow."),
+        ("linkedin", "devon", "Devon Flint", f"I work on {term} at Mothsignal. We tried a new tool last month and are checking whether it reduces manual work."),
         ("x", "val", "@val-example", f"We just launched a product for {term}. Try our new feature."),
         ("x", None, "@unknown-example", f"Has anyone tried changing how they do {term}?"),
     ]
@@ -87,28 +89,44 @@ def review_brief(project, state, rig):
             return True
 
 
-def walk_command(project, name, budget):
+def walk_command(project, name, budget, *, live=False, spider=None, target=None):
     root = Path(__file__).resolve().parent
     installed = root / ".pudding/bin/pudding"
     command = [str(installed)] if installed.is_file() else [sys.executable, str(root / "rig.py")]
     command += ["walk", "--project", str(project.resolve()), "--run", name]
-    if budget:
-        command += ["--live", "--budget-usd", budget]
+    if live:
+        command.append("--live")
+        if budget:
+            command += ["--budget-usd", budget]
+        if spider is not None:
+            command.append("--spider" if spider else "--no-spider")
+    if target is not None:
+        command += ["--target", str(target)]
     return shlex.join(command)
 
 
+def brief_answer(label, *, required=False, split=False):
+    while True:
+        text = input(f"{label} › ").strip()
+        answer = [item.strip() for item in text.split(",") if item.strip()] if split else text
+        if answer or not required:
+            return answer
+        print("Enter at least one answer to continue.")
+
+
 def run(args, rig):
-    if args.live and not args.budget_usd:
-        raise ValueError("Give the live preview a cap with --budget-usd.")
     if args.budget_usd and not args.live:
         raise ValueError("Use --live with --budget-usd, or omit the cap for the example.")
-    budget = dollars(micro_dollars(args.budget_usd)) if args.live else None
+    if args.spider and not args.live:
+        raise ValueError("Use --spider with --live.")
+    if args.target is not None and not 1 <= args.target <= 500:
+        raise ValueError("Use --target from 1 to 500.")
+    budget = dollars(micro_dollars(args.budget_usd)) if args.budget_usd else None
     mode = "live" if args.live else "example"
     name = args.run or f"{mode}-preview"
     project = args.project or Path("runs") / f"pudding-{uuid4().hex[:8]}"
-    continue_command = walk_command(project, name, budget)
     print("\nSelf-Sourcing Pudding")
-    print(f"Live preview · LinkedIn, X and work email · maximum US${budget}" if args.live
+    print("Live preview · LinkedIn, X and work email" if args.live
           else "Example preview · public site for the brief · fictional candidates · US$0")
     print(f"Project: {project.resolve()}")
     if not (project / "state.json").exists():
@@ -116,7 +134,8 @@ def run(args, rig):
         website = args.website
         if profile_channel(url) and not website:
             website = input("Company website: ").strip()
-        pilot.start_project(Namespace(url=url, website=website, project=project, starter=None, target=100), rig, show=False)
+        pilot.start_project(Namespace(url=url, website=website, project=project, starter=None,
+                                      target=args.target or 20, ask=brief_answer), rig, show=False)
     elif args.url or args.website:
         raise ValueError("This project already has a URL. Use a new project to start from another company.")
 
@@ -126,22 +145,36 @@ def run(args, rig):
         summary = rig.read_json(summary_path) if summary_path.exists() else None
         if summary and summary["mode"] != mode:
             raise ValueError("Choose a different --run name when switching between example and live previews.")
+        spider = args.spider if args.spider is not None else args.live
+        target = args.target
+        ledger_path = out / "treg-run.json"
+        if args.live and ledger_path.exists():
+            saved = rig.read_json(ledger_path)["plan"]
+            budget = budget or dollars(saved["budget_micro"])
+            if target is None:
+                target = saved["brief"]["limits"]["shortlist_size"]
+            if args.spider is None:
+                spider = bool(saved.get("spider"))
         if not out.exists():
             print("\n1. Review your sourcing brief")
             if not review_brief(project, state, rig):
+                continue_command = walk_command(project, name, budget, live=args.live, spider=spider, target=target)
                 print(f"Draft saved. Continue with:\n  {continue_command}")
                 return
+        if args.live and budget is None:
+            budget = dollars(micro_dollars(input("Maximum spend for this run in USD › ").strip()))
+        continue_command = walk_command(project, name, budget, live=args.live, spider=spider, target=target)
         if not summary or summary.get("pending_spend_usd"):
             if out.exists() and not args.live:
                 raise ValueError("This run name already exists. Choose a fresh --run name.")
-            if out.exists() and not (out / "treg-run.json").exists():
+            if out.exists() and not ledger_path.exists():
                 raise ValueError("This run has no Treg record to resume. Choose a fresh --run name.")
             print("\n2. Resume the preview" if out.exists() else "\n2. Build the preview")
             if args.live:
                 print(f"If the run is interrupted, continue with:\n  {continue_command}", flush=True)
             preview = Namespace(project=project, run=name, budget_usd=budget, corpus=None, identities=None,
                                 batch=False, resume=out.exists(), searches=None, profiles=None, pages=1,
-                                results_per_search=None, no_email=False)
+                                results_per_search=None, no_email=False, spider=spider, target=target)
             example = None if args.live else example_corpus(rig.read_brief(project / "brief.toml"))
             try:
                 pilot.run_preview(preview, state, rig, example=example)
@@ -158,5 +191,6 @@ def run(args, rig):
             next_index = 2
             while pilot.run_path(project, f"{mode}-pass-{next_index}").exists():
                 next_index += 1
-            next_command = walk_command(project, f"{mode}-pass-{next_index}", budget)
+            next_command = walk_command(project, f"{mode}-pass-{next_index}", budget, live=args.live,
+                                        spider=spider, target=target)
             print(f"Run this URL again with your saved brief and feedback:\n  {next_command}")

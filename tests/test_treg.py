@@ -1,14 +1,236 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
+import rig
+from pilot import channel_status, select_preview
 from rig import build_queue, discovery_terms, match_terms, read_json
-from treg_adapter import LINKEDIN, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, PendingCall, Treg, billing, bounded_call, journal, run_live
+import treg_adapter
+from treg_adapter import (COMPANY, LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_PROFILE,
+                          X_QUOTES, X_REPLIES, PendingCall, Treg, billing, bounded_call, employer_scope, journal,
+                          run_live)
 
 
 class TregSpendTest(TestCase):
+    def test_spider_feeds_threads_and_verified_employer_posts_into_one_queue_on_resume(self):
+        now = datetime.now(timezone.utc)
+        company = "https://www.linkedin.com/company/fixture-team"
+        other_company = "https://www.linkedin.com/company/other-team"
+        profiles = {name: f"https://www.linkedin.com/in/fixture-{name}"
+                    for name in ("seed", "coworker", "outsider", "teammate", "wrong-company", "reassigned")}
+        seed_url = "https://www.linkedin.com/posts/fixture-seed"
+        seed_x = "https://x.com/fixture/status/100"
+        role = "Platform Engineer"
+        first_person = "We built ephemeral stacks for our app team."
+        workflow_phrase = "ephemeral environment"
+        prices = {LINKEDIN: 4_000, X: 750, PROFILE: 6_400, LINKEDIN_COMMENTS: 4_000, X_REPLIES: 500, X_PROFILE: 220,
+                  X_QUOTES: 5_000, COMPANY: 4_000}
+        client = Mock()
+        client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
+        client.preflight.side_effect = lambda endpoints, include_x_quotes=False: {
+            **{e: prices[e] for e in endpoints}, **({X_QUOTES: 50_000} if include_x_quotes else {}),
+        }
+        requests = []
+
+        def post(name):
+            content = (f"We maintain an {workflow_phrase} for every pull request." if name == "teammate"
+                       else f"{first_person} It uses an {workflow_phrase}.")
+            if name == "reassigned":
+                content = "This is a public roundup of ephemeral stacks and preview deploy tools."
+            if name == "seed":
+                content = f"Discussion of ephemeral stacks and how to run a preview deploy in an {workflow_phrase}."
+            return {"linkedinUrl": f"https://www.linkedin.com/posts/fixture-{name}", "content": content,
+                    "postedAt": {"date": now.isoformat()},
+                    "author": {"name": name, "linkedinUrl": profiles[name], "info": role}}
+
+        def comment(name, identifier):
+            text = (f"At Fixture Company, we built ephemeral stacks using an {workflow_phrase}."
+                    if name == "coworker" else "Same here.")
+            return {"linkedinUrl": f"{seed_url}?commentUrn={identifier}", "commentary": text,
+                    "createdAt": now.isoformat(),
+                    "actor": {"name": name, "linkedinUrl": profiles[name], "position": role}}
+
+        def request(path, method, params, headers):
+            endpoint = path.removeprefix("/call/")
+            requests.append((endpoint, params, headers))
+            paid = {"x-treg-cost-micro": str(prices[endpoint])}
+            if endpoint == LINKEDIN:
+                if "authorsCompany" not in params:
+                    return 200, paid, {"elements": [post("reassigned"), post("seed")]}
+                self.assertEqual(params, {"authorsCompany": company,
+                                          "search": f'"ephemeral stacks" OR "{workflow_phrase}"',
+                                          "sortBy": "date", "page": 1})
+                return 200, paid, {"elements": [post("teammate"), post("wrong-company"), post("reassigned")]}
+            if endpoint == X:
+                return 200, paid, {"output": {"data": {"items": [
+                    {"id": "100", "text": first_person, "authorUsername": "fixture", "createdUtc": now.timestamp()},
+                    {"id": "101", "text": first_person, "authorUsername": "already", "createdUtc": now.timestamp()},
+                ]}}}
+            if endpoint == LINKEDIN_COMMENTS:
+                self.assertEqual(params, {"post": seed_url, "sortBy": "date", "page": 1})
+                return 200, paid, {"elements": [comment("outsider", 1), comment("coworker", 2), comment("teammate", 3)]}
+            if endpoint == X_REPLIES:
+                self.assertEqual(params, {"url": seed_x, "limit": 8})
+                attempts = [request for request in requests if request[0] == X_REPLIES]
+                if len(attempts) == 1:
+                    raise ValueError("Connection dropped after billing")
+                self.assertEqual(attempts[0], attempts[1])
+                replay = {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true",
+                          "x-treg-original-cost-micro": str(prices[endpoint])}
+                return 200, replay, {"output": {"found": True, "data": {"items": [
+                    {"id": "101", "text": first_person, "authorHandle": "ALREADY", "createdUtc": now.timestamp()},
+                    {"id": "102", "text": "Same here.", "authorHandle": "newperson", "createdUtc": now.timestamp()},
+                ]}}}
+            if endpoint == X_QUOTES:
+                self.assertEqual(params, {"id": "100", "max_results": 10,
+                                          "tweet.fields": "author_id,created_at,referenced_tweets"})
+                self.assertEqual(headers["X-Treg-Route-Max-Cost"], "0.050000")
+                return 200, paid, {"data": [
+                    {"id": "103", "author_id": "456", "text": "We ran into that issue too.", "created_at": now.isoformat(),
+                     "referenced_tweets": [{"type": "quoted", "id": "100"}]},
+                    {"id": "104", "author_id": "789", "text": "A different quote.", "created_at": now.isoformat(),
+                     "referenced_tweets": [{"type": "quoted", "id": "999"}]},
+                ]}
+            if endpoint == X_PROFILE:
+                handle = params["handle"]
+                name = "Coworker Example" if handle == "fixture" else "Someone Else"
+                profile = profiles["coworker" if handle == "fixture" else "outsider"]
+                return 200, paid, {"output": {"found": True, "data": {
+                    "handle": handle, "website": profile, "displayName": name,
+                }}}
+            if endpoint == COMPANY:
+                org_url = params["url"]
+                description = "We build regulated software for clinics." if org_url == other_company else "Developer tools."
+                return 200, paid, {"element": {"linkedinUrl": org_url, "description": description}}
+            self.assertEqual(endpoint, PROFILE)
+            name = next(name for name, url in profiles.items() if url == params["url"])
+            current_company = other_company if name in {"outsider", "wrong-company", "reassigned"} else company
+            return 200, paid, {"element": {
+                "linkedinUrl": params["url"], "firstName": name, "lastName": "Example",
+                "currentPosition": [{"position": "Systems Lead" if name == "coworker" else role, "companyName": "Fixture Company",
+                                     "companyLinkedinUrl": current_company}],
+            }}
+
+        client.request.side_effect = request
+        with TemporaryDirectory() as folder, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            out = Path(folder) / "run"
+            brief_path = Path(folder) / "brief.toml"
+            template = (rig.EXAMPLE / "brief.toml").read_text()
+            brief_path.write_text('company_signals = ["regulated software"]\n' + template + f"""
+
+[[searches]]
+lane = "problem"
+phrase = "ephemeral stacks"
+
+[[searches]]
+lane = "alternative"
+phrase = "BranchDock"
+workflow = ["{workflow_phrase}"]
+""", encoding="utf-8")
+            options = ["live", "--brief", str(brief_path), "--out", str(out), "--budget-usd", "0.12",
+                       "--searches", "1", "--profiles", "6", "--spider"]
+            with self.assertRaises(SystemExit) as interrupted:
+                rig.main(options)
+            self.assertEqual(interrupted.exception.code, 2)
+            self.assertFalse((out / "queue.json").exists())
+            rig.main([*options, "--resume"])
+            queue = read_json(out / "queue.json")
+            corpus = read_json(out / "corpus.json")
+            ledger = read_json(out / "treg-run.json")
+
+        endpoints = [entry[0] for entry in requests]
+        self.assertEqual(endpoints.count(LINKEDIN_COMMENTS), 1)
+        self.assertEqual(endpoints.count(X_REPLIES), 2)
+        self.assertEqual(endpoints.count(X_QUOTES), 1)
+        self.assertEqual(endpoints.count(LINKEDIN), 2)
+        self.assertEqual(endpoints.count(PROFILE), 6)
+        self.assertEqual(next(params["url"] for endpoint, params, _ in requests if endpoint == PROFILE), profiles["coworker"])
+        self.assertEqual(billing(ledger), 65_310)
+        self.assertEqual(endpoints.count(COMPANY), 2)
+        self.assertEqual(channel_status(ledger, treg_adapter)["linkedin"]["status"], "complete")
+        sources = {source["url"]: source for source in corpus["observations"]}
+        self.assertEqual(len(sources), 10)
+        self.assertNotIn("https://www.linkedin.com/posts/fixture-wrong-company", sources)
+        self.assertNotIn("https://x.com/ALREADY/status/101", sources)
+        self.assertNotIn("https://x.com/i/web/status/104", sources)
+        self.assertEqual(sources["https://x.com/already/status/101"]["kind"], "reply")
+        self.assertNotIn("person_id", sources["https://x.com/already/status/101"])
+        self.assertEqual(sources[seed_x]["person_id"], sources[f"{seed_url}?commentUrn=2"]["person_id"])
+        self.assertEqual(sources[seed_x]["binding_source"], "https://x.com/fixture")
+        self.assertEqual(sources["https://x.com/i/web/status/103"]["kind"], "quote")
+        self.assertEqual([item["lane"] for item in sources["https://www.linkedin.com/posts/fixture-reassigned"]["found_by"]],
+                         ["problem"])
+        for child, parent in [(f"{seed_url}?commentUrn=2", seed_url), ("https://x.com/newperson/status/102", seed_x),
+                              ("https://x.com/already/status/101", seed_x), ("https://x.com/i/web/status/103", seed_x)]:
+            self.assertEqual(sources[child]["parent_id"], sources[parent]["id"])
+            self.assertEqual(sources[child]["found_by"][-1]["seed_url"], parent)
+        self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["lane"], "employer")
+        self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["seed_url"],
+                         f"{seed_url}?commentUrn=2")
+        self.assertIn("At Fixture Company", sources["https://www.linkedin.com/posts/fixture-teammate"]
+                      ["found_by"][0]["scope_excerpt"])
+        self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["root_url"], seed_url)
+        cards, held, _ = select_preview(queue, {}, 20, rig)
+        names = [row["person"]["name"] for row in cards]
+        teammate = next(row for row in cards if row["person"]["name"] == "teammate Example")
+        self.assertEqual(len(teammate["sources"]), 2)
+        self.assertEqual(names[0], "coworker Example")
+        self.assertLess(names.index("coworker Example"), names.index("outsider Example"))
+        outsider = next(row["person"] for row in cards if row["person"]["name"] == "outsider Example")
+        self.assertNotIn("employer_signal", outsider)
+        self.assertEqual(outsider["company_fit"], {
+            "source_url": other_company, "excerpt": "We build regulated software for clinics.",
+            "signals": ["regulated software"],
+        })
+        self.assertTrue(any(source["url"] == "https://x.com/newperson/status/102"
+                            for row in held for source in row["sources"]))
+        with self.assertRaisesRegex(ValueError, "attributed to this person"):
+            rig.apply_reviews(queue, {"person:fixture-coworker": {
+                "decision": "qualify", "reason": "test", "evidence_kind": "explicit_work",
+                "source_id": sources[seed_url]["id"], "excerpt": first_person,
+            }})
+
+    def test_employer_pivot_needs_work_at_the_verified_employer(self):
+        def scope(text):
+            return employer_scope(text, "Fixture Company", ["preview deploy"], match_terms)
+
+        self.assertEqual(scope("At Fixture Company we built a preview deploy."), "At Fixture Company we built a preview deploy.")
+        for text in ("We built a preview deploy.", "At Former Company we built a preview deploy.",
+                     "At Fixture Company Labs we built a preview deploy.",
+                     "At Fixture Company we built a preview deploy for a client.",
+                     "At Fixture Company we built a preview deploy as a side project."):
+            with self.subTest(text=text):
+                self.assertIsNone(scope(text))
+
+    def test_spider_skips_followups_when_the_budget_cannot_cover_them(self):
+        now = datetime.now(timezone.utc)
+        client = Mock()
+        client.preflight.return_value = {LINKEDIN: 4_000, X: 750}
+        client.endpoint_prices.side_effect = lambda endpoints: {e: 500 for e in endpoints}
+        client.request.side_effect = [
+            (200, {"x-treg-cost-micro": "4000"}, {"elements": [
+                {"linkedinUrl": "https://www.linkedin.com/posts/fixture", "content": "We built a preview deploy.",
+                 "postedAt": {"date": now.isoformat()}},
+            ]}),
+            (200, {"x-treg-cost-micro": "750"}, {"output": {"data": {"items": [
+                {"authorUsername": "fixture", "id": "10", "text": "We built a preview deploy.",
+                 "createdUtc": now.timestamp()},
+            ]}}}),
+        ]
+        with TemporaryDirectory() as folder, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
+                patch("treg_adapter.Treg", return_value=client):
+            brief = rig.read_brief(rig.EXAMPLE / "brief.toml")
+            args = SimpleNamespace(searches=1, budget_usd="0.005", profiles=0, spider=True, dry_run=False,
+                                   out=Path(folder) / "run", resume=False)
+            corpus = run_live(brief, args, match_terms, discovery_terms(brief))
+            self.assertEqual(billing(read_json(args.out / "treg-run.json")), 4_750)
+        self.assertEqual(client.request.call_count, 2)
+        self.assertEqual(len(corpus["observations"]), 2)
+
     def test_problem_search_checks_approved_phrases_before_limiting_results(self):
         brief = {"signals": ["customer onboarding", "guided onboarding"], "alternatives": [],
                  "searches": [{"lane": "problem", "phrase": term}
@@ -146,6 +368,50 @@ class TregSpendTest(TestCase):
         with self.assertRaisesRegex(ValueError, "no connected provider keys"):
             client.preflight({PROFILE})
         client.request.assert_called_once_with("/secrets")
+
+    def test_quote_preflight_requires_a_metered_read_only_x_connection(self):
+        client = Treg("test-token", "demo-team")
+        scopes = ["tweet.read", "users.read", "offline.access"]
+        metered = True
+
+        def request(path, **_kwargs):
+            data = {
+                "/secrets": [{"id": 1, "kind": "oauth"}],
+                "/tools": [{"base_url": "https://api.x.com", "bindings": [{"secret_id": 1, "injector": "oauth"}]}],
+                "/connections": [{"id": 1, "kind": "oauth", "provider": "x", "scopes": scopes}],
+                f"/catalog/endpoints/{X_QUOTES}/access": {"tier": "tool", "metered": metered},
+                f"/catalog/endpoints/{X_QUOTES}": {"endpoint": {"method": "GET", "platform_eligible": True,
+                    "cost": {"type": "per_result", "unit": "post", "currency": "USD", "usd": 0.005}}},
+            }[path]
+            return 200, {}, data
+
+        client.request = Mock(side_effect=request)
+        self.assertEqual(client.preflight(set(), include_x_quotes=True), {X_QUOTES: 50_000})
+        metered = False
+        self.assertEqual(client.preflight(set(), include_x_quotes=True), {})
+        scopes.append("tweet.write")
+        with self.assertRaisesRegex(ValueError, "read-only X connection"):
+            client.preflight(set(), include_x_quotes=True)
+
+    def test_spider_resume_keeps_an_earlier_skip_when_the_endpoint_returns(self):
+        client = Mock()
+        replay = {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true",
+                  "x-treg-original-cost-micro": "500"}
+        client.request.side_effect = [ValueError("Connection dropped"), (200, replay, {"ok": True})]
+        comment_params = {"post": "https://www.linkedin.com/posts/fixture"}
+        reply_params = {"url": "https://x.com/fixture/status/1"}
+        plan = {"budget_micro": 20_000, "spider": True}
+        with TemporaryDirectory() as folder:
+            out = Path(folder) / "run"
+            with journal(out, plan, "demo-team", False) as (path, state):
+                self.assertIsNone(bounded_call(client, path, state, LINKEDIN_COMMENTS, comment_params, None, dict))
+                with self.assertRaises(PendingCall):
+                    bounded_call(client, path, state, X_REPLIES, reply_params, 14_000, dict)
+            with journal(out, plan, "demo-team", True) as (path, state):
+                self.assertIsNone(bounded_call(client, path, state, LINKEDIN_COMMENTS, comment_params, 5_000, dict))
+                self.assertEqual(bounded_call(client, path, state, X_REPLIES, reply_params, 14_000, dict), {"ok": True})
+                self.assertEqual(billing(state), 500)
+        self.assertEqual([item.args[0] for item in client.request.call_args_list], [f"/call/{X_REPLIES}"] * 2)
 
     def test_remaining_budget_prevents_a_second_lookup_and_replay_is_local(self):
         client = Mock()

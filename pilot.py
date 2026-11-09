@@ -289,11 +289,7 @@ def run_preview(args, state, rig, *, example=None):
     queue, held, seen = prepared if prepared is not None else prepare(corpus)
     cards = queue["candidates"]
     if example is not None:
-        queue["mode"] = "example"
-        for row in cards:
-            email = row["person"].get("example_email")
-            row["work_email"] = ({"status": "example", "address": email, "checked_on": queue["as_of"]}
-                                 if email else {"status": "no_example_address"})
+        rig.mark_example_emails(queue)
     if args.corpus or example is not None:
         rig.new_run(out, queue)
     else:

@@ -6,8 +6,9 @@ Open Terminal in this extracted folder. Run:
   bash "Start Pudding.command" --project runs/my-company
 
 Paste your company URL, edit or approve the brief, then vote yay or nay
-on at least one candidate. This example reads your public site and uses
-fictional candidates and work emails. It costs US$0.
+on at least one candidate. The walkthrough reads your public site and
+uses fictional candidates and work emails. It costs US$0. To see the
+email column, open the example shortlist CSV linked in README.md.
 
 Run it again with the same project and a new run name:
 

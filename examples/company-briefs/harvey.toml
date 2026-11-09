@@ -1,0 +1,17 @@
+# Illustrative brief based on Harvey's public product material: https://www.harvey.ai/blog/playbook-builder-in-harvey
+schema_version = 1
+product = "Harvey helps legal teams use their own standards to review contracts with AI."
+problem = "Legal teams need consistent first-pass contract reviews as the volume of agreements and exceptions grows."
+target_roles = ["Legal Operations", "General Counsel", "Commercial Counsel", "Contracts Manager", "Legal Innovation"]
+signals = ["contract review", "contract playbook", "redline review", "contract triage"]
+alternatives = ["Spellbook", "Luminance"]
+derive_searches = true
+exclusions = ["Vendor announcements", "Generic legal AI commentary", "Posts containing confidential client or contract details"]
+qualifies = "The person describes running or evaluating contract review, redlining, or playbook enforcement for their team."
+more_like = "A commercial counsel explains how their team tests a review playbook against recurring contract exceptions."
+less_like = "A legal AI roundup names several tools without describing how the author uses them."
+
+[limits]
+source_age_days = 45
+role_age_days = 30
+shortlist_size = 20

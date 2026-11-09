@@ -246,6 +246,9 @@ def build_queue(brief, corpus, as_of=None):
     matches = {}
     source_urls = set()
     terms = discovery_terms(brief)
+    employer_terms = list(dict.fromkeys([
+        *terms, *(term for search in brief.get("searches", []) for term in search.get("workflow", [])),
+    ]))
     for key, source in observations.items():
         if source["channel"] not in CHANNELS or source["kind"] not in SOURCE_KINDS:
             raise ValueError(f"Unsupported channel or source type for {key}.")
@@ -254,7 +257,8 @@ def build_queue(brief, corpus, as_of=None):
             raise ValueError(f"Duplicate source URL: {url}")
         source_urls.add(url)
         nonempty(source["author"], "source author")
-        matches[key] = match_terms(nonempty(source["text"], "source text"), terms)
+        from_employer = any(item.get("lane") == "employer" for item in source.get("found_by", []))
+        matches[key] = match_terms(nonempty(source["text"], "source text"), employer_terms if from_employer else terms)
         if source.get("person_id") is not None and source["person_id"] not in people:
             raise ValueError(f"{key} points to an unknown person.")
         parent = source.get("parent_id")
@@ -296,7 +300,8 @@ def build_queue(brief, corpus, as_of=None):
 
     ranked = sorted(candidates.values(), key=lambda row: (
         bool(candidate_hold(row)), not row["role_matches"],
-        not any(source["matches"] for source in row["sources"]), row["id"],
+        not any(source["matches"] for source in row["sources"]),
+        not (row["person"] or {}).get("employer_signal"), row["id"],
     ))
     return {"schema_version": 1, "as_of": as_of.isoformat(), "brief": brief, "candidates": ranked}
 
@@ -492,6 +497,7 @@ def main(argv=None):
                       help="queries per channel (default: up to four from an explicit plan, otherwise two)")
     live.add_argument("--profiles", type=int, choices=range(11), default=4, metavar="0–10",
                       help="maximum independent LinkedIn role lookups")
+    live.add_argument("--spider", action="store_true", help="follow promising posts and one employer search")
     live.add_argument("--dry-run", action="store_true", help="preview the queries and cap offline")
     live.add_argument("--resume", action="store_true", help="reuse settled calls and recover any pending call in the same run")
     review = commands.add_parser("review", help="review a queue and export a shortlist")

@@ -103,11 +103,23 @@ python3 rig.py live --brief examples/typescript-boundaries/brief.toml \
 python3 rig.py review --run runs/first-live
 ```
 
-The `live --dry-run` command prints the search plan without credentials or network access. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--profiles` to adjust that limit. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile. This version searches posts and leaves comment and reply expansion to a future adapter update.
+The `live --dry-run` command prints the search plan without credentials or network access. A live run checks current endpoint prices, searches LinkedIn and X, and looks up at most four LinkedIn profiles by default. Use `--profiles` to adjust that limit. A LinkedIn result needs a separate profile lookup with one clear current role. X results are research leads and stay on hold until an author is independently linked to a professional profile.
 
 The run saves settled charges and Treg call IDs in `treg-run.json`. After an interruption, rerun the same walkthrough command with the same project, run name, cap and token. For `live` or `pilot run`, repeat the original command with `--resume`. Pudding reuses completed calls and follows [Treg's replay contract](https://treg.to/skill.md#retrying-without-paying-twice) for a pending request: it sends the original key and counts the original charge once, with no extra charge for a replay. If Treg is still processing, wait briefly and resume again. If Pudding cannot safely replay the result (for example, the run is more than 23 hours old or Treg didn't retain the result), it keeps the reservation and stops sending paid requests for that run. Check Treg Activity for the receipt. Keep live run folders private and use the fictional demo when sharing example outputs.
 
 Self-Sourcing Pudding is an independent client of Treg. Treg provides the upstream access. See the [Treg terms](https://treg.to/terms) and the applicable upstream terms for use of live data.
+
+### Follow posts and employers
+
+Add `--spider` to `walk --live`, `pilot run`, or `live` to follow promising results one step further.
+
+```sh
+.pudding/bin/pudding walk --project runs/my-company --live --spider --budget-usd YOUR_LIMIT
+```
+
+Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. When a seed author has a verified current role that fits your brief and describes doing the work, Pudding also searches for relevant LinkedIn posts by people at that employer. It adds the results to the same review queue and keeps the link that led to each source.
+
+A verified connection to that team can move someone up for review. The shortlist still needs current evidence from that person's own words. X replies with unresolved identities stay on hold, and X quote threads can be supplied through an offline corpus. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Keep `--spider` on the continuation command if a run is interrupted.
 
 ## Bring your own offline records
 

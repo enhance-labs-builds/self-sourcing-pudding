@@ -18,6 +18,8 @@ from uuid import uuid4
 
 LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
+LINKEDIN_COMMENTS = "harvestapi.linkedin.post.comments"
+X_REPLIES = "anyapi.x.post.comments"
 PROFILE = "harvestapi.linkedin.user.profile"
 COMPANY = "harvestapi.linkedin.company.profile"
 WEB = "bravesearch.web.search"
@@ -25,9 +27,14 @@ WORK_EMAIL = "anyapi.linkedin.email.work.find"
 VERIFY_EMAIL = "hunter.people.email.verify"
 EMAIL_ENDPOINTS = {COMPANY, WORK_EMAIL, VERIFY_EMAIL}
 METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WEB: "GET",
-           WORK_EMAIL: "POST", VERIFY_EMAIL: "GET"}
+           WORK_EMAIL: "POST", VERIFY_EMAIL: "GET", LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST"}
 PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WEB: 5_000,
-            WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000}
+            WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000, LINKEDIN_COMMENTS: 5_000, X_REPLIES: 14_000}
+SPIDER_RESULTS = 8
+FIRSTHAND = re.compile(
+    r"\b(?:(?:we|i) (?:use|built|run|tested|tried|migrated|own|maintain|shipped)|our (?:team|production|customers))\b",
+    re.I,
+)
 # Treg retains a caller's idempotency key for 24 hours. Leave a margin for clock skew.
 SAFE_REPLAY_SECONDS = 23 * 60 * 60
 
@@ -217,6 +224,14 @@ def bounded_call(client, path, state, endpoint, params, quote, transform, *, res
     call = calls.get(key)
     if call and call["status"] != "pending":
         return call.get("result")
+    if call is None:
+        if quote is None:
+            return None
+        remaining = state["plan"]["budget_micro"] - billing(state) - reserve
+        ceiling = min(PER_CALL[endpoint], remaining)
+        if ceiling < quote:
+            print(f"Skipped {endpoint}: the remaining budget is below its listed price.")
+            return None
     pending = pending_calls(state)
     if pending and set(pending) != {key}:
         raise PendingCall("A different request is still pending. No new paid requests were sent. Check Treg Activity.")
@@ -228,11 +243,6 @@ def bounded_call(client, path, state, endpoint, params, quote, transform, *, res
             reference = f" (call {call['call_id']})" if call.get("call_id") else ""
             raise PendingCall(f"Treg cannot safely replay {endpoint}{reference}. Check Treg Activity; the reservation is still held.")
     else:
-        remaining = state["plan"]["budget_micro"] - billing(state) - reserve
-        ceiling = min(PER_CALL[endpoint], remaining)
-        if ceiling < quote:
-            print(f"Skipped {endpoint}: the remaining budget is below its listed price.")
-            return None
         call = {"endpoint": endpoint, "params": params, "status": "pending", "reserved_micro": ceiling,
                 "started_at": time(), "idempotency_key": f"sourcing-rig-{state['id']}-{key[:24]}"}
         calls[key] = call
@@ -322,15 +332,37 @@ def linkedin_posts(data):
     return output
 
 
-def x_posts(data):
+def linkedin_comments(data):
     output = []
-    for row in data["output"]["data"]["items"]:
-        handle, post_id = row.get("authorUsername", ""), str(row.get("id", ""))
+    for row in data["elements"]:
+        actor = row.get("actor") or {}
+        url = urlsplit(row.get("linkedinUrl") or "")
+        body = row.get("commentary")
+        if (url.scheme != "https" or url.hostname not in {"linkedin.com", "www.linkedin.com"}
+                or url.username is not None or url.port not in {None, 443} or not url.path or not body):
+            continue
+        stamp = row.get("createdAt")
+        output.append({
+            "channel": "linkedin", "kind": "comment", "author": actor.get("name") or "Unknown LinkedIn author",
+            "url": url._replace(fragment="").geturl(), "text": body, "published_on": stamp[:10] if stamp else None,
+            "profile": linkedin_profile(actor.get("linkedinUrl")), "headline": actor.get("position") or "",
+        })
+    return output
+
+
+def x_posts(data, *, replies=False):
+    output = []
+    response = data["output"]
+    if response.get("found") is False:
+        return output
+    for row in response["data"]["items"]:
+        handle = row.get("authorUsername") or row.get("authorHandle") or ""
+        post_id = str(row.get("id", ""))
         if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle) or not post_id.isdigit() or not row.get("text"):
             continue
         stamp = row.get("createdUtc")
         output.append({
-            "channel": "x", "kind": "reply" if row.get("isReply") is True else "post",
+            "channel": "x", "kind": "reply" if replies or row.get("isReply") is True else "post",
             "author": f"@{handle}", "url": f"https://x.com/{handle}/status/{post_id}",
             "text": row["text"], "published_on": datetime.fromtimestamp(stamp, timezone.utc).date().isoformat() if stamp else None,
             "profile": None, "headline": "",
@@ -362,6 +394,77 @@ def profile_record(data, profile, today):
     return person
 
 
+def discover_followups(client, path, state, quotes, posts, people, brief, match_terms, *, since, today, reserve):
+    """Read one page around each selected seed, without following the results again."""
+    terms = list(dict.fromkeys([
+        *brief["signals"],
+        *(term for search in brief.get("searches", []) for term in search.get("workflow", [])),
+    ]))
+
+    def current(post):
+        return str(since) <= (post["published_on"] or "") <= today
+
+    seeds = sorted(
+        (post for post in posts.values() if post["kind"] == "post" and current(post)),
+        key=lambda post: (bool(FIRSTHAND.search(post["text"])), len(match_terms(post["text"], terms)),
+                          post["published_on"]),
+        reverse=True,
+    )
+    x_by_id = {post["url"].rsplit("/", 1)[-1]: post for post in posts.values() if post["channel"] == "x"}
+    for channel in ("linkedin", "x"):
+        seed = next((post for post in seeds if post["channel"] == channel), None)
+        if not seed:
+            continue
+        if channel == "linkedin":
+            endpoint, params, parse = LINKEDIN_COMMENTS, {"post": seed["url"], "sortBy": "date", "page": 1}, linkedin_comments
+        else:
+            endpoint, params = X_REPLIES, {"url": seed["url"], "limit": SPIDER_RESULTS}
+            parse = lambda data: x_posts(data, replies=True)
+        # AnyAPI can switch to a dearer reply provider. Leave room for its documented worst case.
+        quote = PER_CALL[endpoint] if endpoint in quotes else None
+        rows = bounded_call(client, path, state, endpoint, params, quote, parse, reserve=reserve)
+        for row in [row for row in rows or [] if row["url"] != seed["url"] and current(row)][:SPIDER_RESULTS]:
+            if channel == "x":
+                post_id = row["url"].rsplit("/", 1)[-1]
+                if post_id == seed["url"].rsplit("/", 1)[-1]:
+                    continue
+                row = x_by_id.setdefault(post_id, row)
+            observed = posts.setdefault(row["url"], dict(row))
+            if observed["kind"] == "post":
+                continue
+            observed.setdefault("parent_url", seed["url"])
+            found_by = {"lane": "thread", "seed_url": seed["url"], "kind": row["kind"]}
+            provenance = observed.setdefault("found_by", [])
+            if found_by not in provenance:
+                provenance.append(found_by)
+
+    for seed in seeds:
+        person = people.get(seed["profile"])
+        workflow = match_terms(seed["text"], terms)
+        if (not person or not person.get("company_url") or not workflow
+                or not FIRSTHAND.search(seed["text"]) or not match_terms(person["role"], brief["target_roles"])):
+            continue
+        company = person["company_url"]
+        query = " OR ".join('"' + phrase.replace('"', "") + '"' for phrase in workflow[:2])
+        params = {"authorsCompany": company, "search": query, "sortBy": "date", "page": 1}
+        rows = bounded_call(client, path, state, LINKEDIN, params, quotes[LINKEDIN], linkedin_posts, reserve=reserve)
+        added = 0
+        for row in rows or []:
+            matched = match_terms(row["text"], workflow)
+            if not row["profile"] or row["profile"] == seed["profile"] or not current(row) or not matched:
+                continue
+            observed = posts.setdefault(row["url"], {**row, "employer_search": company})
+            found_by = {"lane": "employer", "company": company, "seed_url": seed["url"], "workflow_matches": matched}
+            provenance = observed.setdefault("found_by", [])
+            if found_by not in provenance:
+                provenance.append(found_by)
+            added += 1
+            if added == SPIDER_RESULTS:
+                break
+        return {"company_url": company, "seed_url": seed["url"], "seed_profile": seed["profile"]}
+    return None
+
+
 def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     explicit_searches = "searches" in brief
     search_count = args.searches or (4 if explicit_searches else 2)
@@ -371,6 +474,7 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     per_search = getattr(args, "results_per_search", 12)
     terms = [search["phrase"] for search in searches]
     story_searches = brief.get("customer_stories", [])
+    spider = getattr(args, "spider", False)
     budget = micro_dollars(args.budget_usd)
     print(f"Treg run ceiling: US${dollars(budget)}. Up to {len(terms) * (pages + 1)} social searches, "
           f"{len(story_searches)} customer story searches, and {args.profiles} role lookups.", flush=True)
@@ -385,6 +489,8 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
             print("    Skip these phrases for this search: " + ", ".join(search["exclude_phrases"]), flush=True)
     for story in story_searches:
         print(f"  Customer stories [{story['competitor']}]: {story_query(story)}", flush=True)
+    if spider:
+        print("  Follow-ups: up to one LinkedIn comment page, one X reply page, and one employer search.", flush=True)
     if args.dry_run:
         return None
 
@@ -397,6 +503,8 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         plan["linkedin_pages"] = pages
     if per_search != 12:
         plan["results_per_search"] = per_search
+    if spider:
+        plan["spider"] = True
     endpoints = {LINKEDIN, X}
     if args.profiles:
         endpoints.add(PROFILE)
@@ -408,6 +516,12 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     minimum = (quotes[LINKEDIN] * pages + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
     if budget < minimum:
         raise ValueError("The budget is below the listed cost of the planned searches. Reduce --searches or raise the cap.")
+    if spider:
+        for endpoint in (LINKEDIN_COMMENTS, X_REPLIES):
+            try:
+                quotes.update(client.endpoint_prices({endpoint}))
+            except ValueError as error:
+                print(f"Follow-up search unavailable: {error}")
     email_quotes = {}
     email_reserve = 0
     if enrich and budget - minimum >= sum(PER_CALL[endpoint] for endpoint in EMAIL_ENDPOINTS) + quotes.get(PROFILE, 0):
@@ -485,23 +599,57 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
                     })
             atomic_json(args.out / "customer-story-queue.json", {"as_of": today, "stories": list(stories.values())})
             print(f"Found {len(stories)} customer stories to check at the original source.")
-        ranked = sorted(
-            (post for post in posts.values() if post["profile"] and str(since) <= (post["published_on"] or "") <= today),
-            key=lambda post: (bool(match_terms(post["headline"], brief["target_roles"])),
-                              len(match_terms(post["text"], brief["signals"])), post["published_on"]),
-            reverse=True,
-        )
-        profiles = list(dict.fromkeys(post["profile"] for post in ranked))[:args.profiles]
         people = {}
-        for profile in profiles:
-            person = bounded_call(client, path, state, PROFILE, {"url": profile}, quotes[PROFILE],
-                                  lambda data: profile_record(data, profile, today), reserve=email_reserve)
-            if person:
-                people[profile] = person
+        checked = set()
+
+        def check_profiles(limit):
+            if len(checked) >= limit:
+                return
+            ranked = sorted(
+                (post for post in posts.values() if post["profile"]
+                 and str(since) <= (post["published_on"] or "") <= today),
+                key=lambda post: (bool(match_terms(post["headline"], brief["target_roles"])),
+                                  len(match_terms(post["text"], brief["signals"])), post["published_on"]),
+                reverse=True,
+            )
+            for profile in dict.fromkeys(post["profile"] for post in ranked):
+                if profile in checked:
+                    continue
+                checked.add(profile)
+                person = bounded_call(client, path, state, PROFILE, {"url": profile}, quotes[PROFILE],
+                                      lambda data: profile_record(data, profile, today), reserve=email_reserve)
+                if person:
+                    people[profile] = person
+                if len(checked) == limit:
+                    break
+
+        employer = None
+        if spider:
+            check_profiles(min(2, args.profiles))
+            employer = discover_followups(client, path, state, quotes, posts, people, brief, match_terms,
+                                          since=since, today=today, reserve=email_reserve)
+        check_profiles(args.profiles)
+        if pending_calls(state):
+            raise PendingCall("A search is still pending. Resume this run before creating a new preview.")
+        if employer:
+            for profile, person in people.items():
+                if profile != employer["seed_profile"] and person.get("company_url") == employer["company_url"]:
+                    person["employer_signal"] = {key: employer[key] for key in ("company_url", "seed_url")}
+
+        # Keep the provider's employer filter as a discovery hint until we check the current role.
+        kept = [
+            post for post in posts.values()
+            if not post.get("employer_search") or not people.get(post["profile"])
+            or people[post["profile"]].get("company_url") == post["employer_search"]
+        ]
+        source_ids = {post["url"]: f"treg-{index}" for index, post in enumerate(kept, 1)}
         observations = []
-        for index, post in enumerate(posts.values(), 1):
-            observation = {key: value for key, value in post.items() if key not in {"profile", "headline"}}
-            observation["id"] = f"treg-{index}"
+        for post in kept:
+            observation = {key: value for key, value in post.items()
+                           if key not in {"profile", "headline", "parent_url", "employer_search"}}
+            observation["id"] = source_ids[post["url"]]
+            if post.get("parent_url") in source_ids:
+                observation["parent_id"] = source_ids[post["parent_url"]]
             person = people.get(post["profile"])
             if person:
                 observation["person_id"] = person["id"]

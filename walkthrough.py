@@ -22,6 +22,7 @@ def setup_command(commands):
     walk.add_argument("--project", type=Path, help="folder to save or continue the walkthrough")
     walk.add_argument("--run", help="choose a new run name to try a revised brief in the same project")
     walk.add_argument("--live", action="store_true", help="use Treg for a real preview")
+    walk.add_argument("--spider", action="store_true", help="follow promising posts and one employer search")
     walk.add_argument("--budget-usd", help="total cap for a live run")
 
 
@@ -87,13 +88,15 @@ def review_brief(project, state, rig):
             return True
 
 
-def walk_command(project, name, budget):
+def walk_command(project, name, budget, *, spider=False):
     root = Path(__file__).resolve().parent
     installed = root / ".pudding/bin/pudding"
     command = [str(installed)] if installed.is_file() else [sys.executable, str(root / "rig.py")]
     command += ["walk", "--project", str(project.resolve()), "--run", name]
     if budget:
         command += ["--live", "--budget-usd", budget]
+    if spider:
+        command.append("--spider")
     return shlex.join(command)
 
 
@@ -102,11 +105,13 @@ def run(args, rig):
         raise ValueError("Give the live preview a cap with --budget-usd.")
     if args.budget_usd and not args.live:
         raise ValueError("Use --live with --budget-usd, or omit the cap for the example.")
+    if args.spider and not args.live:
+        raise ValueError("Use --spider with --live.")
     budget = dollars(micro_dollars(args.budget_usd)) if args.live else None
     mode = "live" if args.live else "example"
     name = args.run or f"{mode}-preview"
     project = args.project or Path("runs") / f"pudding-{uuid4().hex[:8]}"
-    continue_command = walk_command(project, name, budget)
+    continue_command = walk_command(project, name, budget, spider=args.spider)
     print("\nSelf-Sourcing Pudding")
     print(f"Live preview · LinkedIn, X and work email · maximum US${budget}" if args.live
           else "Example preview · public site for the brief · fictional candidates · US$0")
@@ -141,7 +146,7 @@ def run(args, rig):
                 print(f"If the run is interrupted, continue with:\n  {continue_command}", flush=True)
             preview = Namespace(project=project, run=name, budget_usd=budget, corpus=None, identities=None,
                                 batch=False, resume=out.exists(), searches=None, profiles=None, pages=1,
-                                results_per_search=None, no_email=False)
+                                results_per_search=None, no_email=False, spider=args.spider)
             example = None if args.live else example_corpus(rig.read_brief(project / "brief.toml"))
             try:
                 pilot.run_preview(preview, state, rig, example=example)
@@ -158,5 +163,5 @@ def run(args, rig):
             next_index = 2
             while pilot.run_path(project, f"{mode}-pass-{next_index}").exists():
                 next_index += 1
-            next_command = walk_command(project, f"{mode}-pass-{next_index}", budget)
+            next_command = walk_command(project, f"{mode}-pass-{next_index}", budget, spider=args.spider)
             print(f"Run this URL again with your saved brief and feedback:\n  {next_command}")

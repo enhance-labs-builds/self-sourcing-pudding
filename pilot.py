@@ -36,6 +36,7 @@ def setup_commands(commands):
     run.add_argument("--results-per-search", type=int, choices=range(1, 51), metavar="1–50",
                      help="results to examine per page on both channels")
     run.add_argument("--batch", action="store_true", help="use the approved full batch target")
+    run.add_argument("--spider", action="store_true", help="follow promising posts and one employer search")
     run.add_argument("--no-email", action="store_true", help="skip work email lookup and verification")
     run.add_argument("--resume", action="store_true", help="continue the same live run and recover any pending call")
     run.add_argument("--corpus", type=Path, help="preview previously collected records offline")
@@ -191,6 +192,7 @@ def select_preview(queue, feedback, limit, rig, *, example=False):
     known.sort(key=lambda row: (
         bool(row["role_matches"]),
         any(FIRSTHAND.search(source["text"]) for source in row["sources"] if not source["hold"]),
+        bool(row["person"].get("employer_signal")),
         max(source["published_on"] for source in row["sources"] if not source["hold"]),
     ), reverse=True)
     return known[:limit], held, seen
@@ -199,7 +201,8 @@ def select_preview(queue, feedback, limit, rig, *, example=False):
 def channel_status(ledger, adapter):
     coverage = {}
     for channel, endpoint in (("linkedin", adapter.LINKEDIN), ("x", adapter.X)):
-        calls = [call for call in ledger["calls"].values() if call["endpoint"] == endpoint]
+        calls = [call for call in ledger["calls"].values()
+                 if call["endpoint"] == endpoint and not call["params"].get("authorsCompany")]
         ok = sum("result" in call for call in calls)
         planned = len(ledger["plan"]["terms"])
         if channel == "linkedin":
@@ -212,6 +215,8 @@ def channel_status(ledger, adapter):
 def run_preview(args, state, rig, *, example=None):
     import treg_adapter
 
+    if args.spider and (args.corpus or example is not None):
+        raise ValueError("Use --spider with a live search.")
     brief = rig.read_brief(args.project / "brief.toml")
     version = brief_version(brief)
     if not state["approval"] or state["approval"]["version"] != version:
@@ -259,13 +264,19 @@ def run_preview(args, state, rig, *, example=None):
         count = args.searches or min(len(brief.get("searches", [])) or 2, 20)
         options = Namespace(searches=count, budget_usd=args.budget_usd,
                             profiles=args.profiles if args.profiles is not None else limit,
-                            out=out, resume=args.resume, dry_run=False, pages=args.pages,
+                            out=out, resume=args.resume, dry_run=False, pages=args.pages, spider=args.spider,
                             results_per_search=args.results_per_search or (30 if args.batch else 12))
         corpus = run_live(run_brief, options, rig.match_terms, rig.discovery_terms(run_brief),
                           enrich=None if args.no_email else enrich)
         ledger = rig.read_json(out / "treg-run.json")
         stats = {"mode": "live", "spend_usd": billing(ledger) / 1_000_000,
                  "channels": channel_status(ledger, treg_adapter)}
+        if args.spider:
+            stats["followup_sources"] = sum(
+                any(entry.get("lane") in {"thread", "employer"} for entry in source.get("found_by", []))
+                for source in corpus["observations"]
+            )
+            print(f"Follow-up searches found {stats['followup_sources']} sources for the same review queue.")
         pending = sum(call["reserved_micro"] for call in pending_calls(ledger).values())
         if pending:
             stats["pending_spend_usd"] = pending / 1_000_000
@@ -341,6 +352,8 @@ def interactive_votes(queue):
         person = row["person"]
         print(f"\n{person['name']} · {person['role']} · {person['company']}\n{person['profile_url']}" if person
               else f"\n{row['sources'][0]['author']}")
+        if person and person.get("employer_signal"):
+            print(f"  A colleague posted about this work: {person['employer_signal']['seed_url']}")
         if row.get("work_email", {}).get("status") == "verified":
             print(f"Verified work email: {row['work_email']['address']}")
         elif row.get("work_email", {}).get("status") == "example":
@@ -350,6 +363,11 @@ def interactive_votes(queue):
             excerpt = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", source["text"][:650])
             print(f"  {i}. {source['channel']} · {source.get('published_on') or 'date unknown'} · {source['url']}\n"
                   f"     {excerpt}")
+            for discovery in source.get("found_by", []):
+                if discovery.get("lane") == "thread":
+                    print(f"     Found in the conversation on {discovery['seed_url']}")
+                elif discovery.get("lane") == "employer":
+                    print(f"     Found by searching the employer of the author of {discovery['seed_url']}")
         action = input("[y] yay, [n] nay, Enter to skip, [q] save and quit: ").strip().lower()
         if action == "q":
             break

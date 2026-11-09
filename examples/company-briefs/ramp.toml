@@ -1,0 +1,22 @@
+# Illustrative brief based on Ramp's public product page: https://ramp.com/procurement
+schema_version = 1
+product = "Ramp Procurement helps finance teams collect purchase requests, route approvals, and create purchase orders."
+problem = "Growing finance teams need to see what employees want to buy and get approvals before committing spend."
+target_roles = ["Head of Procurement", "Procurement Operations", "Head of Finance", "Finance Operations", "Controller"]
+signals = ["procurement intake", "purchase approvals", "purchase order", "vendor onboarding"]
+alternatives = ["Zip", "Coupa"]
+derive_searches = true
+exclusions = ["Vendor announcements", "Job postings", "Generic advice without a workflow the author owns"]
+qualifies = "The person describes owning or changing how their team requests, approves, or tracks purchases."
+more_like = "A finance lead explains why requests get stuck between Slack and spreadsheets and how they are changing intake."
+less_like = "A vendor shares a procurement checklist without describing its use by their own team."
+
+[[customer_stories]]
+competitor = "Zip"
+site = "https://ziphq.com/customers"
+workflow = "procurement intake"
+
+[limits]
+source_age_days = 45
+role_age_days = 30
+shortlist_size = 20

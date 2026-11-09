@@ -1,0 +1,17 @@
+# Illustrative brief based on Stripe's public docs: https://docs.stripe.com/billing/subscriptions/usage-based
+schema_version = 1
+product = "Stripe Billing lets software teams charge for measured product usage."
+problem = "Software teams need to turn usage events into accurate bills while changing pricing and credits as the product evolves."
+target_roles = ["Billing Engineer", "Staff Software Engineer", "Head of Monetization", "Product Manager", "Finance Operations", "Founder"]
+signals = ["usage-based billing", "usage metering", "prepaid credits", "billing migration"]
+alternatives = ["Orb", "Lago"]
+derive_searches = true
+exclusions = ["Consumer billing complaints", "Vendor announcements", "Pricing commentary without implementation evidence"]
+qualifies = "The person owns, is implementing, or is evaluating how their team meters or charges for product usage."
+more_like = "An engineer explains how their team reconciles usage events with invoices while migrating to credit-based billing."
+less_like = "An investor says usage-based pricing is popular without discussing a billing workflow they run."
+
+[limits]
+source_age_days = 45
+role_age_days = 30
+shortlist_size = 20

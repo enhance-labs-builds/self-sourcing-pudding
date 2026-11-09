@@ -264,11 +264,11 @@ workflow = ["{workflow_phrase}"]
 
     def test_explicit_queries_run_on_both_channels_and_preserve_why_a_post_was_found(self):
         brief = {
-            "signals": ["agent sandbox"], "alternatives": ["Daytona"],
+            "signals": ["agent sandbox"], "alternatives": ["BranchDock"],
             "searches": [
                 {"lane": "problem", "phrase": "agent sandbox"},
-                {"lane": "brand", "phrase": "boat.dev"},
-                {"lane": "alternative", "phrase": "Daytona sandbox"},
+                {"lane": "brand", "phrase": "Siltglass"},
+                {"lane": "alternative", "phrase": "BranchDock sandbox"},
             ],
             "limits": {"source_age_days": 30},
         }
@@ -276,12 +276,12 @@ workflow = ["{workflow_phrase}"]
         client.preflight.return_value = {LINKEDIN: 2_000, X: 600}
         client.request.side_effect = lambda path, *_: (200, {"x-treg-cost-micro": "0"}, {
             "elements": [
-                {"linkedinUrl": "https://www.linkedin.com/posts/work", "content": "Our agent sandbox uses boat.dev."},
-                {"linkedinUrl": "https://www.linkedin.com/posts/racing", "content": "Daytona racing this weekend."},
+                {"linkedinUrl": "https://www.linkedin.com/posts/work", "content": "Our agent sandbox uses Siltglass."},
+                {"linkedinUrl": "https://www.linkedin.com/posts/release", "content": "BranchDock is hiring."},
             ],
         } if path.endswith(LINKEDIN) else {
             "output": {"data": {"items": [
-                {"authorUsername": "builder", "id": "123", "text": "We use Daytona sandbox for builds."},
+                {"authorUsername": "builder", "id": "123", "text": "We use BranchDock sandbox for builds."},
             ]}},
         })
         with TemporaryDirectory() as root, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
@@ -291,9 +291,9 @@ workflow = ["{workflow_phrase}"]
             corpus = run_live(brief, args, match_terms, discovery_terms(brief))
 
         self.assertEqual([call.args[2]["search"] for call in client.request.call_args_list[::2]],
-                         ["agent sandbox", "boat.dev", "Daytona sandbox"])
+                         ["agent sandbox", "Siltglass", "BranchDock sandbox"])
         self.assertEqual([call.args[2]["query"].split(" since:")[0] for call in client.request.call_args_list[1::2]],
-                         ['"agent sandbox"', '"boat.dev"', '"Daytona sandbox"'])
+                         ['"agent sandbox"', '"Siltglass"', '"BranchDock sandbox"'])
         by_channel = {post["channel"]: post["found_by"] for post in corpus["observations"]}
         self.assertEqual(len(corpus["observations"]), 2)
         self.assertEqual(by_channel, {"linkedin": brief["searches"][:2], "x": brief["searches"][2:]})

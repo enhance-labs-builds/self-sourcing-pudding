@@ -8,7 +8,8 @@
       "role": "Platform Engineer",
       "company": "Siltglass Studio",
       "profile_url": "https://profiles.example/nia-alder",
-      "role_checked_on": "2026-11-06"
+      "role_checked_on": "2026-11-06",
+      "example_email": "nia@siltglass.example"
     },
     {
       "id": "devon",

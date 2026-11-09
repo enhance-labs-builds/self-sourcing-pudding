@@ -468,6 +468,14 @@ def csv_value(value):
     return value
 
 
+def mark_example_emails(queue):
+    queue["mode"] = "example"
+    for row in queue["candidates"]:
+        email = (row["person"] or {}).get("example_email")
+        row["work_email"] = ({"status": "example", "address": email, "checked_on": queue["as_of"]}
+                             if email else {"status": "no_example_address"})
+
+
 def write_results(run, queue, decisions):
     results, shortlist = apply_reviews(queue, decisions)
     write_json(run / "review.json", {
@@ -563,6 +571,7 @@ def main(argv=None):
         elif args.command == "demo":
             brief = read_brief(EXAMPLE / "brief.toml")
             queue = build_queue(brief, read_json(EXAMPLE / "corpus.json"))
+            mark_example_emails(queue)
             new_run(args.out, queue)
             show_plan(brief)
             print()

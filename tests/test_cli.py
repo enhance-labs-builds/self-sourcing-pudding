@@ -36,13 +36,18 @@ class OfflineRigTest(unittest.TestCase):
             "person:jules": "passed", "person:sam": "held", "person:val": "passed",
             "person:eli": "held", "person:imani": "held", "source:unbound-x": "held",
         })
-        leads = self.read("runs/demo/shortlist.json")["leads"]
+        shortlist = self.read("runs/demo/shortlist.json")
+        self.assertEqual(shortlist["mode"], "example")
+        leads = shortlist["leads"]
         nia = next(lead for lead in leads if lead["person_id"] == "nia")
         self.assertEqual({item["channel"] for item in nia["sightings"]}, {"x", "linkedin"})
         self.assertTrue(all(lead["history_status"] == "unchecked" for lead in leads))
         with (self.root / "runs/demo/shortlist.csv").open(newline="") as file:
-            self.assertEqual({row["source_url"] for row in csv.DictReader(file)},
-                             {lead["source_url"] for lead in leads})
+            rows = {row["name"]: row for row in csv.DictReader(file)}
+        self.assertEqual({row["source_url"] for row in rows.values()}, {lead["source_url"] for lead in leads})
+        self.assertEqual(rows["Nia Alder"]["work_email"], "nia@siltglass.example")
+        self.assertEqual(rows["Nia Alder"]["work_email_status"], "example")
+        self.assertEqual(rows["Devon Flint"]["work_email"], "")
 
     def test_guided_brief_changes_discovery_and_can_be_reviewed(self):
         self.rig("init", stdin="\n".join([

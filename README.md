@@ -2,9 +2,9 @@
 
 **Find leads already talking about the problem you solve.**
 
-Self-Sourcing Pudding is an open-source lead discovery tool for teams that use AI to find their next customers. Start with your company website. Pudding drafts who to look for, what problem they’re working on, and what they might say about it. Edit or approve that brief, then search public posts on LinkedIn and X for people to review.
+Self-Sourcing Pudding is an open-source lead discovery tool for teams that use AI to find their next customers. Start with your company website. Pudding drafts who to look for, what problem they’re working on, and what they might say about it. Edit or approve that brief, then search public posts on LinkedIn and X. Review the evidence, current roles, and verified work emails when available.
 
-[See the sample CSV](examples/preview-environments/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Run a live search](#search-linkedin-and-x-for-real-leads)
+[See the sample CSV](examples/preview-environments/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Example briefs](#example-briefs) · [Work email lookup](#find-and-verify-work-emails)
 
 ## See why a lead made the list
 
@@ -12,7 +12,7 @@ Say you sell a tool that helps teams test changes before they ship. In the ficti
 
 > I maintain the preview deploy for our app team. Builds fail after a database reset, and I spent Friday restoring previews so the team could review changes.
 
-That gives you a reason to look up Nia and something specific to talk about. You decide who makes the shortlist. Each run saves a CSV with the person’s profile, the dated post, and the quote behind your decision. A later run can bring them back when there’s new evidence.
+That gives you a reason to look up Nia and something specific to talk about. The sample shortlist shows her profile, the dated post, the quote behind the decision, and a fictional work email marked `example`. In a live run you decide who makes the shortlist. A later run can bring someone back when there’s new evidence.
 
 ## Try it with your own URL
 
@@ -40,21 +40,34 @@ You can also download `self-sourcing-pudding-tester.zip` from [GitHub Releases](
 
 Clone the repo as above and run `python3 rig.py demo` from the repository folder. This recreates the [sample CSV](examples/preview-environments/shortlist.csv) at `runs/demo/shortlist.csv` without any network access.
 
+## Example briefs
+
+These examples use public product information. Open a brief to see who you might look for and what evidence would make someone a fit.
+
+| Brief | What to look for |
+| --- | --- |
+| [Ramp](examples/company-briefs/ramp.toml) | Finance and procurement teams fixing purchase intake and approvals |
+| [Stripe](examples/company-briefs/stripe.toml) | Software teams implementing usage metering and billing |
+| [Harvey](examples/company-briefs/harvey.toml) | Legal teams standardizing contract reviews and redlines |
+
 ## Search LinkedIn and X for real leads
 
 Run a live search whenever you want fresh leads. Pudding uses Treg for searches, role checks, and work email lookup. New Treg accounts can start with **US$1 in credit**. Usage draws from your Treg balance. [Treg pricing](https://treg.to/pricing) · [Set up Treg and run a live search](docs/guide.md#run-a-live-search)
 
 Pudding starts with public posts about the workflow or a competitor in your brief. It checks a promising LinkedIn thread for comments and a promising X thread for replies, then looks for coworkers when a post connects the work to a verified employer. A short reply can move up for review when the person's company fits your brief. Shortlisting still takes evidence from that person. [How Pudding follows posts and employers](docs/guide.md#follow-posts-and-employers)
 
-Choose your spend limit and use `--target` to set the maximum number of candidates to review. A candidate makes the shortlist after you confirm firsthand evidence. Pudding includes verified work emails when available. When a search turns up few good fits, tune the brief with words practitioners use to describe their work and run it again.
+Choose your spend limit and use `--target` to set the maximum number of candidates to review. A candidate makes the shortlist after you confirm firsthand evidence. When a search turns up few good fits, tune the brief with words practitioners use to describe their work and run it again.
 
 After your first live review, open `runs/my-company/runs/live-preview/shortlist.csv`. Pudding prints a command for another pass with the same brief and votes. The next pass skips people whose evidence you’ve already reviewed.
+
+## Find and verify work emails
+
+The live walkthrough looks up eligible candidates’ work emails through Treg before you review them. Pudding matches each address to the person’s current employer domain and checks it with an independent email verifier. It shows verified addresses on review cards and adds them to `work_email` in the shortlist CSV. When a lookup fails or the spend limit is reached, the address stays blank and `work_email_status` records the reason. [Live setup and email options](docs/guide.md#work-email-lookup) · [Lookup code](work_email.py)
 
 ## Go further
 
 - [Read the guide](docs/guide.md#start-from-a-company-url) to import an existing brief, match an X author to a LinkedIn profile, check spend, or run a larger batch.
 - [Bring your own records](docs/guide.md#bring-your-own-offline-records) to build a shortlist offline.
-- [Browse example briefs](examples/) to see how to search for a competitor alongside the workflow it’s used for.
 - If you open an issue, include your command, Python version, and redacted output. Keep live run folders private.
 - Run `python3 -m unittest discover -s tests` to check changes locally.
 

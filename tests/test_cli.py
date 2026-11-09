@@ -33,6 +33,9 @@ class OfflineRigTest(unittest.TestCase):
         by_id = {row["id"]: row["outcome"] for row in review["outcomes"]}
         self.assertEqual(by_id, {
             "person:devon": "shortlisted", "person:nia": "shortlisted",
+            "person:mara": "shortlisted", "person:theo": "shortlisted", "person:lena": "shortlisted",
+            "person:caleb": "shortlisted", "person:priya": "shortlisted", "person:jonah": "shortlisted",
+            "person:elena": "shortlisted", "person:mateo": "shortlisted",
             "person:jules": "passed", "person:sam": "held", "person:val": "passed",
             "person:eli": "held", "person:imani": "held", "source:unbound-x": "held",
         })
@@ -62,8 +65,9 @@ class OfflineRigTest(unittest.TestCase):
         self.rig("source", "--out", "runs/first")
         queue = self.read("runs/first/queue.json")
         self.assertEqual([item["id"] for item in queue["candidates"]],
-                         ["person:devon", "person:val", "source:unbound-x"])
-        self.rig("review", "--run", "runs/first", stdin="w\n1\n\nOwns purchase approvals.\np\nPromotional post.\n")
+                         ["person:devon", "person:val", "person:mateo", "person:theo", "source:unbound-x"])
+        self.rig("review", "--run", "runs/first",
+                 stdin="w\n1\n\nOwns purchase approvals.\np\nPromotional post.\n\n\n")
         self.assertEqual([lead["person_id"] for lead in self.read("runs/first/shortlist.json")["leads"]],
                          ["devon"])
 

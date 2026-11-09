@@ -24,5 +24,61 @@
   "person:val": {
     "decision": "pass",
     "reason": "The promotional post started a relevant conversation. Its author gives no evidence of owning procurement intake."
+  },
+  "person:mara": {
+    "decision": "qualify",
+    "evidence_kind": "firsthand_problem",
+    "source_id": "mara-post",
+    "excerpt": "I own our purchase order process. Three teams were rekeying the same request, so I'm testing whether approved requests can create the order automatically.",
+    "reason": "Mara owns purchase orders and is testing a fix for duplicate entry."
+  },
+  "person:theo": {
+    "decision": "qualify",
+    "evidence_kind": "firsthand_problem",
+    "source_id": "theo-reply",
+    "excerpt": "Our purchase approvals miss annual renewals because the original owner has often moved teams. I'm setting up reminders with a named approver for each contract.",
+    "reason": "Theo has an active project to catch unapproved renewals."
+  },
+  "person:lena": {
+    "decision": "qualify",
+    "evidence_kind": "explicit_work",
+    "source_id": "lena-comment",
+    "excerpt": "I took over purchase approvals at Fable Mill this quarter. We moved requests above $5,000 out of chat so finance can review them before anyone signs.",
+    "reason": "Lena changed the process for high-value purchases at her own company."
+  },
+  "person:caleb": {
+    "decision": "qualify",
+    "evidence_kind": "explicit_work",
+    "source_id": "caleb-post",
+    "excerpt": "I'm comparing Coupa with our internal procurement intake form. We need each request to carry a budget code so finance can see commitments before month end.",
+    "reason": "Caleb is evaluating alternatives against a concrete budget reporting requirement."
+  },
+  "person:priya": {
+    "decision": "qualify",
+    "evidence_kind": "firsthand_problem",
+    "source_id": "priya-post",
+    "excerpt": "I run vendor onboarding for our properties. We had suppliers send tax forms to three different inboxes, so I'm piloting a single intake form with our accounts payable team.",
+    "reason": "Priya owns onboarding and is piloting a fix with the team that pays suppliers."
+  },
+  "person:jonah": {
+    "decision": "qualify",
+    "evidence_kind": "firsthand_problem",
+    "source_id": "jonah-post",
+    "excerpt": "I found two invoices tied to the same purchase order last close. I'm adding a required request ID so my team can trace what was approved before paying.",
+    "reason": "Jonah is addressing a real reconciliation problem in his team's workflow."
+  },
+  "person:elena": {
+    "decision": "qualify",
+    "evidence_kind": "explicit_work",
+    "source_id": "elena-comment",
+    "excerpt": "We just rolled out purchase approvals by location at Wrenfield. I set a backup approver for each store after orders stalled whenever the manager was away.",
+    "reason": "Elena led a rollout to keep store orders moving when approvers are away."
+  },
+  "person:mateo": {
+    "decision": "qualify",
+    "evidence_kind": "explicit_work",
+    "source_id": "mateo-quote",
+    "excerpt": "I used this checklist to rebuild vendor onboarding at Bluefen. Finance now gets the approved vendor record before the first invoice lands.",
+    "reason": "Mateo rebuilt the handoff from onboarding to finance for his own team."
   }
 }

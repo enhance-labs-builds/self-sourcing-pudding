@@ -4,7 +4,7 @@
 
 Self-Sourcing Pudding is an open-source lead discovery tool for teams that use AI to find their next customers. Start with your company website. Pudding drafts who to look for, what problem they’re working on, and what they might say about it. Edit or approve that brief, then search public posts on LinkedIn and X. Review the evidence, current roles, and verified work emails when available.
 
-[See the Ramp sample CSV](examples/ramp-demo/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Example briefs](#example-briefs) · [Work email lookup](#find-and-verify-work-emails)
+[See 10 sample leads for Ramp](examples/ramp-demo/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Example briefs](#example-briefs) · [Work email lookup](#find-and-verify-work-emails)
 
 ## See why a lead made the list
 

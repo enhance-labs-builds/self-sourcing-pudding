@@ -58,6 +58,74 @@
       "company": "Example Vendor",
       "profile_url": "https://profiles.example/val-quill",
       "role_checked_on": "2026-11-06"
+    },
+    {
+      "id": "mara",
+      "name": "Mara Holt",
+      "role": "Procurement Operations Manager",
+      "company": "Oriole Dune Robotics",
+      "profile_url": "https://profiles.example/mara-holt",
+      "role_checked_on": "2026-11-08",
+      "example_email": "mara@orioledune.example"
+    },
+    {
+      "id": "theo",
+      "name": "Theo Mercer",
+      "role": "Controller",
+      "company": "Bramble Quay Manufacturing",
+      "profile_url": "https://profiles.example/theo-mercer",
+      "role_checked_on": "2026-11-08",
+      "example_email": "theo@bramblequay.example"
+    },
+    {
+      "id": "lena",
+      "name": "Lena Voss",
+      "role": "Head of Finance",
+      "company": "Fable Mill Software",
+      "profile_url": "https://profiles.example/lena-voss",
+      "role_checked_on": "2026-11-08"
+    },
+    {
+      "id": "caleb",
+      "name": "Caleb Wynn",
+      "role": "Finance Operations Lead",
+      "company": "Limestone Kite Health",
+      "profile_url": "https://profiles.example/caleb-wynn",
+      "role_checked_on": "2026-11-08"
+    },
+    {
+      "id": "priya",
+      "name": "Priya Rowan",
+      "role": "Procurement Operations Manager",
+      "company": "Ashmere Hospitality",
+      "profile_url": "https://profiles.example/priya-rowan",
+      "role_checked_on": "2026-11-08",
+      "example_email": "priya@ashmere.example"
+    },
+    {
+      "id": "jonah",
+      "name": "Jonah Birch",
+      "role": "Controller",
+      "company": "Cinder Harbor Services",
+      "profile_url": "https://profiles.example/jonah-birch",
+      "role_checked_on": "2026-11-08"
+    },
+    {
+      "id": "elena",
+      "name": "Elena Moss",
+      "role": "Head of Procurement",
+      "company": "Wrenfield Retail",
+      "profile_url": "https://profiles.example/elena-moss",
+      "role_checked_on": "2026-11-08",
+      "example_email": "elena@wrenfield.example"
+    },
+    {
+      "id": "mateo",
+      "name": "Mateo Reed",
+      "role": "Finance Operations Lead",
+      "company": "Bluefen Systems",
+      "profile_url": "https://profiles.example/mateo-reed",
+      "role_checked_on": "2026-11-08"
     }
   ],
   "observations": [
@@ -153,6 +221,90 @@
       "url": "https://x.example/eli-finch/status/301",
       "published_on": "2026-11-06",
       "text": "I rebuilt our vendor onboarding form after we started getting duplicate requests for the same supplier."
+    },
+    {
+      "id": "mara-post",
+      "channel": "linkedin",
+      "kind": "post",
+      "author": "Mara Holt",
+      "person_id": "mara",
+      "url": "https://linkedin.example/posts/mara-post",
+      "published_on": "2026-11-05",
+      "text": "I own our purchase order process. Three teams were rekeying the same request, so I'm testing whether approved requests can create the order automatically."
+    },
+    {
+      "id": "theo-reply",
+      "channel": "x",
+      "kind": "reply",
+      "author": "@theo-purchasing",
+      "person_id": "theo",
+      "url": "https://x.example/theo-purchasing/status/402",
+      "published_on": "2026-11-07",
+      "text": "Our purchase approvals miss annual renewals because the original owner has often moved teams. I'm setting up reminders with a named approver for each contract.",
+      "parent_id": "val-launch"
+    },
+    {
+      "id": "lena-comment",
+      "channel": "linkedin",
+      "kind": "comment",
+      "author": "Lena Voss",
+      "person_id": "lena",
+      "url": "https://linkedin.example/posts/lena-comment",
+      "published_on": "2026-11-03",
+      "text": "I took over purchase approvals at Fable Mill this quarter. We moved requests above $5,000 out of chat so finance can review them before anyone signs.",
+      "parent_id": "nia-linkedin"
+    },
+    {
+      "id": "caleb-post",
+      "channel": "x",
+      "kind": "post",
+      "author": "@caleb-purchasing",
+      "person_id": "caleb",
+      "url": "https://x.example/caleb-purchasing/status/404",
+      "published_on": "2026-11-04",
+      "text": "I'm comparing Coupa with our internal procurement intake form. We need each request to carry a budget code so finance can see commitments before month end."
+    },
+    {
+      "id": "priya-post",
+      "channel": "linkedin",
+      "kind": "post",
+      "author": "Priya Rowan",
+      "person_id": "priya",
+      "url": "https://linkedin.example/posts/priya-post",
+      "published_on": "2026-11-06",
+      "text": "I run vendor onboarding for our properties. We had suppliers send tax forms to three different inboxes, so I'm piloting a single intake form with our accounts payable team."
+    },
+    {
+      "id": "jonah-post",
+      "channel": "x",
+      "kind": "post",
+      "author": "@jonah-purchasing",
+      "person_id": "jonah",
+      "url": "https://x.example/jonah-purchasing/status/406",
+      "published_on": "2026-11-02",
+      "text": "I found two invoices tied to the same purchase order last close. I'm adding a required request ID so my team can trace what was approved before paying."
+    },
+    {
+      "id": "elena-comment",
+      "channel": "linkedin",
+      "kind": "comment",
+      "author": "Elena Moss",
+      "person_id": "elena",
+      "url": "https://linkedin.example/posts/elena-comment",
+      "published_on": "2026-11-04",
+      "text": "We just rolled out purchase approvals by location at Wrenfield. I set a backup approver for each store after orders stalled whenever the manager was away.",
+      "parent_id": "nia-linkedin"
+    },
+    {
+      "id": "mateo-quote",
+      "channel": "x",
+      "kind": "quote",
+      "author": "@mateo-purchasing",
+      "person_id": "mateo",
+      "url": "https://x.example/mateo-purchasing/status/408",
+      "published_on": "2026-11-08",
+      "text": "I used this checklist to rebuild vendor onboarding at Bluefen. Finance now gets the approved vendor record before the first invoice lands.",
+      "parent_id": "val-launch"
     }
   ]
 }

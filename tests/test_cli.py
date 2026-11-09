@@ -44,29 +44,31 @@ class OfflineRigTest(unittest.TestCase):
         self.assertTrue(all(lead["history_status"] == "unchecked" for lead in leads))
         with (self.root / "runs/demo/shortlist.csv").open(newline="") as file:
             rows = {row["name"]: row for row in csv.DictReader(file)}
+        with (CLI.parent / "examples/ramp-demo/shortlist.csv").open(newline="") as file:
+            self.assertEqual(list(rows.values()), list(csv.DictReader(file)))
         self.assertEqual({row["source_url"] for row in rows.values()}, {lead["source_url"] for lead in leads})
-        self.assertEqual(rows["Nia Alder"]["work_email"], "nia@siltglass.example")
+        self.assertEqual(rows["Nia Alder"]["work_email"], "nia@junipervale.example")
         self.assertEqual(rows["Nia Alder"]["work_email_status"], "example")
         self.assertEqual(rows["Devon Flint"]["work_email"], "")
 
     def test_guided_brief_changes_discovery_and_can_be_reviewed(self):
         self.rig("init", stdin="\n".join([
-            "Reliable preview deployments", "Slow pull request feedback",
-            "Developer Experience", "pull request", "BranchDock", "Launch posts",
-            "Describes owning or doing preview work", "Builds PR previews",
+            "Purchasing approvals", "Slow security reviews",
+            "Procurement Operations", "security review", "Zip", "Promotional posts",
+            "Describes owning an approval workflow", "Routes purchase requests for review",
             "Vendor promoting a feature", "",
         ]))
-        self.assertIn("Search signals: pull request", self.rig("plan").stdout)
+        self.assertIn("Search signals: security review", self.rig("plan").stdout)
         self.rig("source", "--out", "runs/first")
         queue = self.read("runs/first/queue.json")
         self.assertEqual([item["id"] for item in queue["candidates"]],
                          ["person:devon", "person:val", "source:unbound-x"])
-        self.rig("review", "--run", "runs/first", stdin="w\n1\n\nOwns PR previews.\np\nLaunch post.\n")
+        self.rig("review", "--run", "runs/first", stdin="w\n1\n\nOwns purchase approvals.\np\nPromotional post.\n")
         self.assertEqual([lead["person_id"] for lead in self.read("runs/first/shortlist.json")["leads"]],
                          ["devon"])
 
         path = self.root / "brief.toml"
-        path.write_text(path.read_text().replace("Describes owning or doing preview work", "Owns failed preview deploys"))
+        path.write_text(path.read_text().replace("Describes owning an approval workflow", "Owns stalled purchase approvals"))
         self.rig("source", "--out", "runs/changed")
         error = self.rig("review", "--run", "runs/changed", "--decisions",
                          "runs/first/review.json", exit_code=2)
@@ -76,8 +78,8 @@ class OfflineRigTest(unittest.TestCase):
         self.rig("demo")
         original = self.read("runs/demo/review.json")
         attempts = [
-            ("person:sam", "nia-linkedin", "I maintain the preview deploy", "attributed to this person"),
-            ("source:unbound-x", "unbound-x", "take twenty minutes", "no verified profile binding"),
+            ("person:sam", "nia-linkedin", "I run procurement intake", "attributed to this person"),
+            ("source:unbound-x", "unbound-x", "take five days", "no verified profile binding"),
         ]
         for candidate, source, excerpt, error in attempts:
             with self.subTest(candidate=candidate):

@@ -1,0 +1,28 @@
+{
+  "person:nia": {
+    "decision": "qualify",
+    "evidence_kind": "firsthand_problem",
+    "source_id": "nia-linkedin",
+    "excerpt": "I run procurement intake at Juniper Vale. Purchase approvals kept getting stuck between Slack and a spreadsheet, so we piloted one request form with finance and IT last week.",
+    "reason": "Nia owns procurement intake and describes a recent pilot to fix stalled approvals."
+  },
+  "person:devon": {
+    "decision": "qualify",
+    "evidence_kind": "explicit_work",
+    "source_id": "devon-quote",
+    "excerpt": "We evaluated Ramp and Zip for procurement intake. I put finance approval and security review on the same purchase request so approvals stopped getting lost in Slack.",
+    "reason": "Devon evaluated tools and changed the approval workflow for their own team."
+  },
+  "person:jules": {
+    "decision": "pass",
+    "reason": "The role makes the commenter worth reviewing, but the comment gives no evidence about their own work."
+  },
+  "person:sam": {
+    "decision": "hold",
+    "reason": "Sam is at the same employer as the original author. Check whether Sam works on purchasing approvals."
+  },
+  "person:val": {
+    "decision": "pass",
+    "reason": "The promotional post started a relevant conversation. Its author gives no evidence of owning procurement intake."
+  }
+}

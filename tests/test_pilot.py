@@ -18,7 +18,7 @@ class PilotTest(TestCase):
         for person in corpus["people"]:
             person["profile_url"] = f"https://www.linkedin.com/in/sourcing-rig-fixture-{person['id']}"
         html = ('<title>Agent sandboxes</title><meta name="description" content="Linux VMs for agents">'
-                '<a href="https://x.com/example">X</a><a href="/compare/example-vs-sandboxlane">Compare</a>')
+                '<a href="https://x.com/example">X</a><a href="/compare/example-vs-fixture-competitor">Compare</a>')
         with TemporaryDirectory() as root, redirect_stdout(StringIO()), \
                 patch("url_seed.fetch_page", return_value=("https://example.com/", html)):
             project = Path(root) / "pilot"
@@ -29,11 +29,11 @@ class PilotTest(TestCase):
             def run(*args):
                 return rig.main(["pilot", *args, "--project", str(project)])
 
-            run("start", "example.com", "--starter", str(fixture / "brief.toml"), "--target", "1")
+            run("start", "example.com", "--starter", str(rig.EXAMPLE_BRIEF), "--target", "1")
             state_path = project / "state.json"
             seed = rig.read_json(state_path)["seed"]
             self.assertEqual(seed["linked_profiles"], {"x": "https://x.com/example"})
-            self.assertEqual(list(seed["comparisons"]), ["sandboxlane"])
+            self.assertEqual(list(seed["comparisons"]), ["fixture competitor"])
             with self.assertRaises(SystemExit) as unapproved:
                 run("run", "--run", "first", "--corpus", str(path))
             self.assertEqual(unapproved.exception.code, 2)
@@ -69,16 +69,16 @@ class PilotTest(TestCase):
         profiles = [f"https://www.linkedin.com/in/sourcing-rig-fixture-{i}" for i in range(2)]
         company = "https://www.linkedin.com/company/sourcing-rig-fixture"
         address = "operator@example.com"
-        excerpt = "We built a preview deploy to test each change."
+        excerpt = "We built a usage-based billing workflow that reconciles events before invoicing."
         prices = {LINKEDIN: 2_000, X: 600, PROFILE: 6_400, COMPANY: 4_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 12_250}
         responses = {
             LINKEDIN: {"elements": [{"linkedinUrl": f"https://www.linkedin.com/posts/fixture-{i}",
                                     "content": excerpt, "postedAt": {"date": now.isoformat()},
                                     "author": {"name": "Example Operator", "linkedinUrl": url,
-                                               "info": "Platform Engineer"}} for i, url in enumerate(profiles)]},
+                                               "info": "Billing Engineer"}} for i, url in enumerate(profiles)]},
             X: {"output": {"data": {"items": []}}},
             PROFILE: {"element": {"linkedinUrl": profiles[0], "firstName": "Example", "lastName": "Operator",
-                                  "currentPosition": [{"position": "Platform Engineer", "companyName": "Example Co",
+                                  "currentPosition": [{"position": "Billing Engineer", "companyName": "Example Co",
                                                        "companyLinkedinUrl": company}]}},
             COMPANY: {"element": {"linkedinUrl": company, "name": "Example Co", "website": "https://example.com"}},
             WORK_EMAIL: {"output": {"found": True, "data": {"linkedinUrl": profiles[0], "emails": [{"email": address}]}}},
@@ -113,7 +113,7 @@ class PilotTest(TestCase):
             def run(*args):
                 rig.main(["pilot", *args, "--project", str(project)])
 
-            run("start", "example.com", "--starter", str(rig.EXAMPLE / "brief.toml"))
+            run("start", "example.com", "--starter", str(rig.EXAMPLE_BRIEF.with_name("stripe.toml")))
             run("approve", "--yes")
             options = ("--run", "live", "--budget-usd", "0.042", "--searches", "1", "--profiles", "2")
             run("run", *options)
@@ -167,7 +167,7 @@ class PilotTest(TestCase):
         with self.assertRaisesRegex(ValueError, "exact source URL and author"):
             attach_identities(corpus, [{**binding, "author": "A different author"}], rig)
         attach_identities(corpus, [binding], rig)
-        queue = rig.build_queue(rig.read_brief(rig.EXAMPLE / "brief.toml"), corpus)
+        queue = rig.build_queue(rig.read_brief(rig.EXAMPLE_BRIEF), corpus)
         row = next(c for c in queue["candidates"] if c["id"] == "person:nia")
         self.assertEqual({s["channel"] for s in row["sources"]}, {"linkedin", "x"})
         self.assertEqual(source["binding_source"], binding["binding_source"])

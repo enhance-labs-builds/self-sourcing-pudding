@@ -15,7 +15,9 @@ from urllib.parse import urlsplit
 from treg_adapter import evidence_priority
 
 
-EXAMPLE = Path(__file__).resolve().parent / "examples" / "preview-environments"
+EXAMPLES = Path(__file__).resolve().parent / "examples"
+EXAMPLE = EXAMPLES / "ramp-demo"
+EXAMPLE_BRIEF = EXAMPLES / "company-briefs" / "ramp.toml"
 CHANNELS = {"linkedin", "x"}
 SEARCH_LANES = {"problem", "brand", "alternative", "account"}
 SOURCE_KINDS = {"post", "comment", "reply", "quote"}
@@ -152,18 +154,18 @@ def init_brief(path, example):
     if path.exists():
         raise ValueError(f"{path} already exists. Edit it or choose another path.")
     if example:
-        contents = (EXAMPLE / "brief.toml").read_text(encoding="utf-8")
+        contents = EXAMPLE_BRIEF.read_text(encoding="utf-8")
     else:
         fields = [
-            ("product", "What do you build?", "A tool that makes preview deployments reliable", False, True),
-            ("problem", "What problem or workflow do you want to find?", "Preview environments break or take too long to spin up", False, True),
-            ("target_roles", "Who does or owns this work? Use commas", "Platform Engineer, Developer Experience, DevOps", True, True),
-            ("signals", "What phrases would those people use? Use commas", "preview deploy, preview environment, staging bottleneck", True, True),
-            ("alternatives", "Competitors, alternatives, or workarounds? Use commas or leave blank", "BranchDock, deploy script, shared staging", True, False),
+            ("product", "What do you build?", "Software that routes purchase requests for approval", False, True),
+            ("problem", "What problem or workflow do you want to find?", "Purchase requests get lost between Slack and spreadsheets", False, True),
+            ("target_roles", "Who does or owns this work? Use commas", "Procurement Operations, Head of Finance, Controller", True, True),
+            ("signals", "What phrases would those people use? Use commas", "procurement intake, purchase approvals, vendor onboarding", True, True),
+            ("alternatives", "Competitors, alternatives, or workarounds? Use commas or leave blank", "Zip, Coupa, shared spreadsheet", True, False),
             ("exclusions", "Who or what should be passed over? Use commas or leave blank", "generic launch praise, vendor staff promoting their tool", True, False),
-            ("qualifies", "What evidence would qualify someone?", "They describe owning or doing this work on a software team", False, True),
-            ("more_like", "Give one example of a good fit", "An engineer explaining how they debug their team's failed preview deploys", False, True),
-            ("less_like", "Give one example of a near miss", "A platform engineer sharing a product launch with no account of their own work", False, True),
+            ("qualifies", "What evidence would qualify someone?", "They describe owning or changing their team's approval process", False, True),
+            ("more_like", "Give one example of a good fit", "A finance lead explains how they fixed stalled purchase approvals", False, True),
+            ("less_like", "Give one example of a near miss", "A vendor shares a checklist without describing how their team used it", False, True),
         ]
         lines = ["schema_version = 1", ""]
         for key, label, hint, multiple, required in fields:
@@ -512,7 +514,7 @@ def main(argv=None):
 
     cli = argparse.ArgumentParser(description=__doc__)
     commands = cli.add_subparsers(dest="command", required=True)
-    demo = commands.add_parser("demo", help="run the fictional example end to end")
+    demo = commands.add_parser("demo", help="run the Ramp procurement example with fictional candidates")
     demo.add_argument("--out", type=Path, default=Path("runs/demo"))
     setup = commands.add_parser("init", help="write an editable brief")
     setup.add_argument("--brief", type=Path, default=Path("brief.toml"))
@@ -569,7 +571,7 @@ def main(argv=None):
             decisions = replay_decisions(args.decisions, queue) if args.decisions else interactive_review(queue)
             write_results(args.run, queue, decisions)
         elif args.command == "demo":
-            brief = read_brief(EXAMPLE / "brief.toml")
+            brief = read_brief(EXAMPLE_BRIEF)
             queue = build_queue(brief, read_json(EXAMPLE / "corpus.json"))
             mark_example_emails(queue)
             new_run(args.out, queue)

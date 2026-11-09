@@ -11,8 +11,7 @@ FILES = (
     "rig.py", "pilot.py", "treg_adapter.py", "url_seed.py", "work_email.py",
     "walkthrough.py", "README.md", "LICENSE", "docs/guide.md", "START HERE.txt", "install.sh",
     "examples/company-briefs/ramp.toml", "examples/company-briefs/stripe.toml", "examples/company-briefs/harvey.toml",
-    "examples/preview-environments/brief.toml", "examples/preview-environments/corpus.json",
-    "examples/preview-environments/decisions.json", "examples/preview-environments/shortlist.csv",
+    "examples/ramp-demo/corpus.json", "examples/ramp-demo/decisions.json", "examples/ramp-demo/shortlist.csv",
 )
 
 

@@ -11,7 +11,7 @@ python3 rig.py source --out runs/first
 python3 rig.py review --run runs/first
 ```
 
-Between `init` and `plan`, open `brief.toml` and edit it. For a quick experiment, keep only `"BranchDock"` under `alternatives` and replace `signals` with `["pull request"]`. The preview deploy thread drops out of the queue and the competitor discussion stays in.
+The example uses the Ramp Procurement brief and fictional posts. Between `init` and `plan`, open `brief.toml` and edit it. For a quick experiment, keep only `"Zip"` under `alternatives` and replace `signals` with `["security review"]`. The general purchasing thread drops out of the queue and the discussion about evaluating Zip stays in.
 
 Run `init` without `--example` for guided setup. The questions cover your product, target roles, problem language, competitors and workarounds, and what a good fit and a near miss look like. `plan` shows the terms and evidence rules before discovery. To reuse a previous review on the same queue, pass its `review.json` to `review --decisions`.
 
@@ -66,7 +66,7 @@ workflow = "procurement intake"
 
 Customer stories land in `customer-story-queue.json` for review. Open the original and look for the named customer who describes doing the work. Check their current role independently and record the team, the quote, and when the work happened if known. A dated post describing a live evaluation or unresolved problem is a timing signal. A vendor case study can show installed use and surface a workflow owner. Keep the person's current buying intent unknown unless they give you separate evidence of it.
 
-Use a verified story to improve the next social query. With `lane = "account"`, set `phrase` to the customer name and `workflow` to the phrases from the story. Set `seed_url` to keep the original story linked to posts found by that query. You can also search those phrases on their own with `lane = "problem"` to find teams describing the same pain without naming a tool. For an ambiguous name, add narrow `exclude_phrases` to that query, such as `["Tata Sierra"]`; the rig filters those phrases from returned posts. Evaluate the original author and workflow each time, even when someone quotes a strong customer story. Use `--profiles 0` if you want to review the evidence before paying to check anyone's current role.
+Use a verified story to improve the next social query. With `lane = "account"`, set `phrase` to the customer name and `workflow` to the phrases from the story. Set `seed_url` to keep the original story linked to posts found by that query. You can also search those phrases on their own with `lane = "problem"` to find teams describing the same pain without naming a tool. For an ambiguous name, use `exclude_phrases` to filter out unrelated posts. For example, use `["zip file"]` if a search for Zip turns up discussions of compressed files. Evaluate the original author and workflow each time, even when someone quotes a strong customer story. Use `--profiles 0` if you want to review the evidence before paying to check anyone's current role.
 
 The [Stripe](../examples/company-briefs/stripe.toml) and [Harvey](../examples/company-briefs/harvey.toml) briefs show how the workflow and alternatives change in other markets.
 
@@ -139,7 +139,7 @@ Approve access in X and start a new `--spider` run. Pudding checks that Treg met
 
 ## Bring your own offline records
 
-Use `source --corpus path/to/corpus.json --out runs/custom` with your own brief. The [example corpus](../examples/preview-environments/corpus.json) defines the format. Set `as_of` to the snapshot date so a repeat run uses the same freshness checks, or override it with `--as-of YYYY-MM-DD`. Keep dates in `YYYY-MM-DD` format.
+Use `source --corpus path/to/corpus.json --out runs/custom` with your own brief. The [fictional Ramp demo corpus](../examples/ramp-demo/corpus.json) shows the format. Set `as_of` to the snapshot date so a repeat run uses the same freshness checks, or override it with `--as-of YYYY-MM-DD`. Keep dates in `YYYY-MM-DD` format.
 
 - A person needs a stable ID, name, role, employer, canonical HTTPS profile URL, and the date the role was last checked.
 - Each observation has a stable ID, channel, kind, author, URL, publication date, and original text. Use the same `person_id` across both channels only after checking the author-to-profile link. Leave it absent when the identity is uncertain.

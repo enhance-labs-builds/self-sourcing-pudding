@@ -119,8 +119,20 @@ class TregSpendTest(TestCase):
                 patch("treg_adapter.Treg", return_value=client):
             out = Path(folder) / "run"
             brief_path = Path(folder) / "brief.toml"
-            template = (rig.EXAMPLE / "brief.toml").read_text()
-            brief_path.write_text('company_signals = ["regulated software"]\n' + template + f"""
+            brief_path.write_text(f"""schema_version = 1
+product = "Temporary environments for testing changes"
+problem = "Teams need isolated environments for review."
+target_roles = ["Platform Engineer"]
+signals = ["ephemeral stacks", "preview deploy"]
+company_signals = ["regulated software"]
+qualifies = "The author describes maintaining their team's test environments."
+more_like = "A practitioner describing their own setup."
+less_like = "A roundup of tools."
+
+[limits]
+source_age_days = 30
+role_age_days = 90
+shortlist_size = 10
 
 [[searches]]
 lane = "problem"
@@ -128,7 +140,7 @@ phrase = "ephemeral stacks"
 
 [[searches]]
 lane = "alternative"
-phrase = "BranchDock"
+phrase = "Example Sandbox"
 workflow = ["{workflow_phrase}"]
 """, encoding="utf-8")
             options = ["live", "--brief", str(brief_path), "--out", str(out), "--budget-usd", "0.12",
@@ -223,7 +235,7 @@ workflow = ["{workflow_phrase}"]
         ]
         with TemporaryDirectory() as folder, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
                 patch("treg_adapter.Treg", return_value=client):
-            brief = rig.read_brief(rig.EXAMPLE / "brief.toml")
+            brief = {"signals": ["preview deploy"], "alternatives": [], "limits": {"source_age_days": 30}}
             args = SimpleNamespace(searches=1, budget_usd="0.005", profiles=0, spider=True, dry_run=False,
                                    out=Path(folder) / "run", resume=False)
             corpus = run_live(brief, args, match_terms, discovery_terms(brief))
@@ -264,11 +276,11 @@ workflow = ["{workflow_phrase}"]
 
     def test_explicit_queries_run_on_both_channels_and_preserve_why_a_post_was_found(self):
         brief = {
-            "signals": ["agent sandbox"], "alternatives": ["BranchDock"],
+            "signals": ["agent sandbox"], "alternatives": ["Example Sandbox"],
             "searches": [
                 {"lane": "problem", "phrase": "agent sandbox"},
-                {"lane": "brand", "phrase": "Siltglass"},
-                {"lane": "alternative", "phrase": "BranchDock sandbox"},
+                {"lane": "brand", "phrase": "Example Build"},
+                {"lane": "alternative", "phrase": "Example Sandbox workspace"},
             ],
             "limits": {"source_age_days": 30},
         }
@@ -276,12 +288,12 @@ workflow = ["{workflow_phrase}"]
         client.preflight.return_value = {LINKEDIN: 2_000, X: 600}
         client.request.side_effect = lambda path, *_: (200, {"x-treg-cost-micro": "0"}, {
             "elements": [
-                {"linkedinUrl": "https://www.linkedin.com/posts/work", "content": "Our agent sandbox uses Siltglass."},
-                {"linkedinUrl": "https://www.linkedin.com/posts/release", "content": "BranchDock is hiring."},
+                {"linkedinUrl": "https://www.linkedin.com/posts/work", "content": "Our agent sandbox uses Example Build."},
+                {"linkedinUrl": "https://www.linkedin.com/posts/release", "content": "Example Sandbox is hiring."},
             ],
         } if path.endswith(LINKEDIN) else {
             "output": {"data": {"items": [
-                {"authorUsername": "builder", "id": "123", "text": "We use BranchDock sandbox for builds."},
+                {"authorUsername": "builder", "id": "123", "text": "We use an Example Sandbox workspace for builds."},
             ]}},
         })
         with TemporaryDirectory() as root, patch.dict("os.environ", {"TREG_TOKEN": "test", "TREG_ORG": "team"}), \
@@ -291,9 +303,9 @@ workflow = ["{workflow_phrase}"]
             corpus = run_live(brief, args, match_terms, discovery_terms(brief))
 
         self.assertEqual([call.args[2]["search"] for call in client.request.call_args_list[::2]],
-                         ["agent sandbox", "Siltglass", "BranchDock sandbox"])
+                         ["agent sandbox", "Example Build", "Example Sandbox workspace"])
         self.assertEqual([call.args[2]["query"].split(" since:")[0] for call in client.request.call_args_list[1::2]],
-                         ['"agent sandbox"', '"Siltglass"', '"BranchDock sandbox"'])
+                         ['"agent sandbox"', '"Example Build"', '"Example Sandbox workspace"'])
         by_channel = {post["channel"]: post["found_by"] for post in corpus["observations"]}
         self.assertEqual(len(corpus["observations"]), 2)
         self.assertEqual(by_channel, {"linkedin": brief["searches"][:2], "x": brief["searches"][2:]})

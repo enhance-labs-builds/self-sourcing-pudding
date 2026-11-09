@@ -9,7 +9,7 @@ import rig
 from pilot import channel_status, select_preview
 from rig import build_queue, discovery_terms, match_terms, read_json
 import treg_adapter
-from treg_adapter import (LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_REPLIES,
+from treg_adapter import (LINKEDIN, LINKEDIN_COMMENTS, PROFILE, SAFE_REPLAY_SECONDS, WEB, X, X_QUOTES, X_REPLIES,
                           PendingCall, Treg, billing, bounded_call, journal, run_live)
 
 
@@ -19,20 +19,26 @@ class TregSpendTest(TestCase):
         company = "https://www.linkedin.com/company/fixture-team"
         other_company = "https://www.linkedin.com/company/other-team"
         profiles = {name: f"https://www.linkedin.com/in/fixture-{name}"
-                    for name in ("seed", "coworker", "outsider", "teammate", "wrong-company")}
+                    for name in ("seed", "coworker", "outsider", "teammate", "wrong-company", "reassigned")}
         seed_url = "https://www.linkedin.com/posts/fixture-seed"
         seed_x = "https://x.com/fixture/status/100"
         role = "Platform Engineer"
-        first_person = "We built a preview deploy for our app team."
+        first_person = "We built ephemeral stacks for our app team."
         workflow_phrase = "ephemeral environment"
-        prices = {LINKEDIN: 4_000, X: 750, PROFILE: 6_400, LINKEDIN_COMMENTS: 4_000, X_REPLIES: 500}
+        prices = {LINKEDIN: 4_000, X: 750, PROFILE: 6_400, LINKEDIN_COMMENTS: 4_000, X_REPLIES: 500,
+                  X_QUOTES: 5_000}
         client = Mock()
-        client.preflight.side_effect = client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
+        client.endpoint_prices.side_effect = lambda endpoints: {e: prices[e] for e in endpoints}
+        client.preflight.side_effect = lambda endpoints, include_x_quotes=False: {
+            **{e: prices[e] for e in endpoints}, **({X_QUOTES: 50_000} if include_x_quotes else {}),
+        }
         requests = []
 
         def post(name):
             content = (f"We maintain an {workflow_phrase} for every pull request." if name == "teammate"
                        else f"{first_person} It uses an {workflow_phrase}.")
+            if name == "reassigned":
+                content = "This is a public roundup of ephemeral stacks and preview deploy tools."
             return {"linkedinUrl": f"https://www.linkedin.com/posts/fixture-{name}", "content": content,
                     "postedAt": {"date": now.isoformat()},
                     "author": {"name": name, "linkedinUrl": profiles[name], "info": role}}
@@ -48,16 +54,15 @@ class TregSpendTest(TestCase):
             paid = {"x-treg-cost-micro": str(prices[endpoint])}
             if endpoint == LINKEDIN:
                 if "authorsCompany" not in params:
-                    return 200, paid, {"elements": [post("seed")]}
+                    return 200, paid, {"elements": [post("reassigned"), post("seed")]}
                 self.assertEqual(params, {"authorsCompany": company,
-                                          "search": f'"preview deploy" OR "{workflow_phrase}"',
+                                          "search": f'"ephemeral stacks" OR "{workflow_phrase}"',
                                           "sortBy": "date", "page": 1})
-                return 200, paid, {"elements": [post("teammate"), post("wrong-company")]}
+                return 200, paid, {"elements": [post("teammate"), post("wrong-company"), post("reassigned")]}
             if endpoint == X:
                 return 200, paid, {"output": {"data": {"items": [
                     {"id": "100", "text": first_person, "authorUsername": "fixture", "createdUtc": now.timestamp()},
-                    {"id": "101", "text": first_person, "authorUsername": "already", "createdUtc": now.timestamp(),
-                     "isReply": True},
+                    {"id": "101", "text": first_person, "authorUsername": "already", "createdUtc": now.timestamp()},
                 ]}}}
             if endpoint == LINKEDIN_COMMENTS:
                 self.assertEqual(params, {"post": seed_url, "sortBy": "date", "page": 1})
@@ -74,9 +79,19 @@ class TregSpendTest(TestCase):
                     {"id": "101", "text": first_person, "authorHandle": "ALREADY", "createdUtc": now.timestamp()},
                     {"id": "102", "text": "Same here.", "authorHandle": "newperson", "createdUtc": now.timestamp()},
                 ]}}}
+            if endpoint == X_QUOTES:
+                self.assertEqual(params, {"id": "100", "max_results": 10,
+                                          "tweet.fields": "author_id,created_at,referenced_tweets"})
+                self.assertEqual(headers["X-Treg-Route-Max-Cost"], "0.050000")
+                return 200, paid, {"data": [
+                    {"id": "103", "author_id": "456", "text": "We ran into that issue too.", "created_at": now.isoformat(),
+                     "referenced_tweets": [{"type": "quoted", "id": "100"}]},
+                    {"id": "104", "author_id": "789", "text": "A different quote.", "created_at": now.isoformat(),
+                     "referenced_tweets": [{"type": "quoted", "id": "999"}]},
+                ]}
             self.assertEqual(endpoint, PROFILE)
             name = next(name for name, url in profiles.items() if url == params["url"])
-            current_company = other_company if name in {"outsider", "wrong-company"} else company
+            current_company = other_company if name in {"outsider", "wrong-company", "reassigned"} else company
             return 200, paid, {"element": {
                 "linkedinUrl": params["url"], "firstName": name, "lastName": "Example",
                 "currentPosition": [{"position": role, "companyName": "Fixture Company",
@@ -92,15 +107,15 @@ class TregSpendTest(TestCase):
 
 [[searches]]
 lane = "problem"
-phrase = "preview deploy"
+phrase = "ephemeral stacks"
 
 [[searches]]
 lane = "alternative"
 phrase = "BranchDock"
 workflow = ["{workflow_phrase}"]
 """, encoding="utf-8")
-            options = ["live", "--brief", str(brief_path), "--out", str(out), "--budget-usd", "0.08",
-                       "--searches", "1", "--profiles", "5", "--spider"]
+            options = ["live", "--brief", str(brief_path), "--out", str(out), "--budget-usd", "0.12",
+                       "--searches", "1", "--profiles", "6", "--spider"]
             with self.assertRaises(SystemExit) as interrupted:
                 rig.main(options)
             self.assertEqual(interrupted.exception.code, 2)
@@ -113,15 +128,23 @@ workflow = ["{workflow_phrase}"]
         endpoints = [entry[0] for entry in requests]
         self.assertEqual(endpoints.count(LINKEDIN_COMMENTS), 1)
         self.assertEqual(endpoints.count(X_REPLIES), 2)
+        self.assertEqual(endpoints.count(X_QUOTES), 1)
         self.assertEqual(endpoints.count(LINKEDIN), 2)
-        self.assertEqual(endpoints.count(PROFILE), 5)
-        self.assertEqual(billing(ledger), 45_250)
+        self.assertEqual(endpoints.count(PROFILE), 6)
+        self.assertEqual(next(params["url"] for endpoint, params, _ in requests if endpoint == PROFILE), profiles["seed"])
+        self.assertEqual(billing(ledger), 56_650)
         self.assertEqual(channel_status(ledger, treg_adapter)["linkedin"]["status"], "complete")
         sources = {source["url"]: source for source in corpus["observations"]}
-        self.assertEqual(len(sources), 8)
+        self.assertEqual(len(sources), 10)
         self.assertNotIn("https://www.linkedin.com/posts/fixture-wrong-company", sources)
         self.assertNotIn("https://x.com/ALREADY/status/101", sources)
-        for child, parent in [(f"{seed_url}?commentUrn=2", seed_url), ("https://x.com/newperson/status/102", seed_x)]:
+        self.assertNotIn("https://x.com/i/web/status/104", sources)
+        self.assertEqual(sources["https://x.com/already/status/101"]["kind"], "reply")
+        self.assertEqual(sources["https://x.com/i/web/status/103"]["kind"], "quote")
+        self.assertEqual([item["lane"] for item in sources["https://www.linkedin.com/posts/fixture-reassigned"]["found_by"]],
+                         ["problem"])
+        for child, parent in [(f"{seed_url}?commentUrn=2", seed_url), ("https://x.com/newperson/status/102", seed_x),
+                              ("https://x.com/already/status/101", seed_x), ("https://x.com/i/web/status/103", seed_x)]:
             self.assertEqual(sources[child]["parent_id"], sources[parent]["id"])
             self.assertEqual(sources[child]["found_by"][-1]["seed_url"], parent)
         self.assertEqual(sources["https://www.linkedin.com/posts/fixture-teammate"]["found_by"][0]["lane"], "employer")
@@ -300,6 +323,50 @@ workflow = ["{workflow_phrase}"]
         with self.assertRaisesRegex(ValueError, "no connected provider keys"):
             client.preflight({PROFILE})
         client.request.assert_called_once_with("/secrets")
+
+    def test_quote_preflight_requires_a_metered_read_only_x_connection(self):
+        client = Treg("test-token", "demo-team")
+        scopes = ["tweet.read", "users.read", "offline.access"]
+        metered = True
+
+        def request(path, **_kwargs):
+            data = {
+                "/secrets": [{"id": 1, "kind": "oauth"}],
+                "/tools": [{"base_url": "https://api.x.com", "bindings": [{"secret_id": 1, "injector": "oauth"}]}],
+                "/connections": [{"id": 1, "kind": "oauth", "provider": "x", "scopes": scopes}],
+                f"/catalog/endpoints/{X_QUOTES}/access": {"tier": "tool", "metered": metered},
+                f"/catalog/endpoints/{X_QUOTES}": {"endpoint": {"method": "GET", "platform_eligible": True,
+                    "cost": {"type": "per_result", "unit": "post", "currency": "USD", "usd": 0.005}}},
+            }[path]
+            return 200, {}, data
+
+        client.request = Mock(side_effect=request)
+        self.assertEqual(client.preflight(set(), include_x_quotes=True), {X_QUOTES: 50_000})
+        metered = False
+        self.assertEqual(client.preflight(set(), include_x_quotes=True), {})
+        scopes.append("tweet.write")
+        with self.assertRaisesRegex(ValueError, "read-only X connection"):
+            client.preflight(set(), include_x_quotes=True)
+
+    def test_spider_resume_keeps_an_earlier_skip_when_the_endpoint_returns(self):
+        client = Mock()
+        replay = {"x-treg-cost-micro": "0", "x-treg-idempotent-replay": "true",
+                  "x-treg-original-cost-micro": "500"}
+        client.request.side_effect = [ValueError("Connection dropped"), (200, replay, {"ok": True})]
+        comment_params = {"post": "https://www.linkedin.com/posts/fixture"}
+        reply_params = {"url": "https://x.com/fixture/status/1"}
+        plan = {"budget_micro": 20_000, "spider": True}
+        with TemporaryDirectory() as folder:
+            out = Path(folder) / "run"
+            with journal(out, plan, "demo-team", False) as (path, state):
+                self.assertIsNone(bounded_call(client, path, state, LINKEDIN_COMMENTS, comment_params, None, dict))
+                with self.assertRaises(PendingCall):
+                    bounded_call(client, path, state, X_REPLIES, reply_params, 14_000, dict)
+            with journal(out, plan, "demo-team", True) as (path, state):
+                self.assertIsNone(bounded_call(client, path, state, LINKEDIN_COMMENTS, comment_params, 5_000, dict))
+                self.assertEqual(bounded_call(client, path, state, X_REPLIES, reply_params, 14_000, dict), {"ok": True})
+                self.assertEqual(billing(state), 500)
+        self.assertEqual([item.args[0] for item in client.request.call_args_list], [f"/call/{X_REPLIES}"] * 2)
 
     def test_remaining_budget_prevents_a_second_lookup_and_replay_is_local(self):
         client = Mock()

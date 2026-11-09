@@ -20,6 +20,7 @@ LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
 LINKEDIN_COMMENTS = "harvestapi.linkedin.post.comments"
 X_REPLIES = "anyapi.x.post.comments"
+X_QUOTES = "x.x.get-posts-quoted-posts"
 PROFILE = "harvestapi.linkedin.user.profile"
 COMPANY = "harvestapi.linkedin.company.profile"
 WEB = "bravesearch.web.search"
@@ -27,10 +28,12 @@ WORK_EMAIL = "anyapi.linkedin.email.work.find"
 VERIFY_EMAIL = "hunter.people.email.verify"
 EMAIL_ENDPOINTS = {COMPANY, WORK_EMAIL, VERIFY_EMAIL}
 METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WEB: "GET",
-           WORK_EMAIL: "POST", VERIFY_EMAIL: "GET", LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST"}
+           WORK_EMAIL: "POST", VERIFY_EMAIL: "GET", LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST", X_QUOTES: "GET"}
 PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WEB: 5_000,
-            WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000, LINKEDIN_COMMENTS: 5_000, X_REPLIES: 14_000}
+            WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000, LINKEDIN_COMMENTS: 5_000, X_REPLIES: 14_000,
+            X_QUOTES: 50_000}
 SPIDER_RESULTS = 8
+X_QUOTE_PAGE = 10
 FIRSTHAND = re.compile(
     r"\b(?:(?:we|i) (?:use|built|run|tested|tried|migrated|own|maintain|shipped)|our (?:team|production|customers))\b",
     re.I,
@@ -94,14 +97,52 @@ class Treg:
                 body = None
             return response.code, {key.lower(): value for key, value in response.headers.items()}, body
 
-    def preflight(self, endpoints):
+    def preflight(self, endpoints, *, include_x_quotes=False):
+        message = ("Use a Treg team with no connected provider keys or custom tools. "
+                   "Pudding also supports one Treg-managed read-only X connection.")
+        team = {}
         for path in ("/secrets", "/tools"):
             status, _, rows = self.request(path)
             if status != 200 or not isinstance(rows, list):
                 raise ValueError(f"Could not verify Treg team billing mode ({path}, HTTP {status}). Check TREG_TOKEN and TREG_ORG.")
-            if rows:
-                raise ValueError("Use a Treg team with no connected provider keys or custom tools so every call is covered by Treg's spend cap.")
-        return self.endpoint_prices(endpoints)
+            if path == "/secrets" and rows and (len(rows) != 1 or rows[0].get("kind") != "oauth"):
+                raise ValueError(message)
+            team[path] = rows
+        has_connection = any(team.values())
+        if has_connection and not self.read_only_x_connection(team["/secrets"], team["/tools"]):
+            raise ValueError(message)
+        quotes = self.endpoint_prices(endpoints)
+        if include_x_quotes and has_connection:
+            status, _, access = self.request(f"/catalog/endpoints/{X_QUOTES}/access")
+            if (status == 200 and isinstance(access, dict)
+                    and access.get("tier") in {"tool", "credential"} and access.get("metered") is True):
+                try:
+                    quotes.update(self.endpoint_prices({X_QUOTES}))
+                except ValueError:
+                    print("X quotes skipped. Could not confirm the catalog price for the run.")
+            else:
+                print("X quotes skipped. Treg did not confirm a metered connection for quote posts.")
+        return quotes
+
+    def read_only_x_connection(self, secrets, registered):
+        if len(secrets) != 1 or len(registered) > 1 or secrets[0].get("kind") != "oauth":
+            return False
+        secret_id = secrets[0].get("id")
+        if secret_id is None:
+            return False
+        for tool in registered:
+            bindings = tool.get("bindings") or []
+            if (tool.get("base_url", "").rstrip("/") != "https://api.x.com" or len(bindings) != 1
+                    or bindings[0].get("secret_id") != secret_id or bindings[0].get("injector") != "oauth"):
+                return False
+        status, _, connections = self.request("/connections")
+        if status != 200 or not isinstance(connections, list) or len(connections) != 1:
+            return False
+        x = connections[0]
+        scopes = set(x.get("scopes") or [])
+        return (x.get("id") == secret_id and x.get("provider") == "x" and not x.get("paused")
+                and not x.get("needs_reconnect") and {"tweet.read", "users.read"} <= scopes
+                and scopes <= {"tweet.read", "users.read", "offline.access"})
 
     def endpoint_prices(self, endpoints):
         quotes = {}
@@ -112,11 +153,12 @@ class Treg:
             row = payload.get("endpoint", {})
             price = row.get("cost", {})
             currencies = {"USD", "credit"} if endpoint == VERIFY_EMAIL else {"USD"}
+            unit, types = ("post", {"per_result"}) if endpoint == X_QUOTES else ("call", {"per_call", "per_success"})
             if (row.get("method") != METHODS[endpoint] or row.get("platform_eligible") is not True
                     or row.get("platform_blocked") or price.get("currency") not in currencies
-                    or price.get("unit") != "call" or price.get("type") not in {"per_call", "per_success"}):
+                    or price.get("unit") != unit or price.get("type") not in types):
                 raise ValueError(f"{endpoint} no longer has a supported Treg platform price or request contract.")
-            quotes[endpoint] = micro_dollars(price["usd"])
+            quotes[endpoint] = micro_dollars(price["usd"]) * (X_QUOTE_PAGE if endpoint == X_QUOTES else 1)
             if quotes[endpoint] > PER_CALL[endpoint]:
                 raise ValueError(f"{endpoint} exceeds this adapter's per-call cap.")
         return quotes
@@ -225,12 +267,18 @@ def bounded_call(client, path, state, endpoint, params, quote, transform, *, res
     if call and call["status"] != "pending":
         return call.get("result")
     if call is None:
-        if quote is None:
+        skipped = state.setdefault("spider_skips", []) if state["plan"].get("spider") else []
+        if key in skipped:
             return None
         remaining = state["plan"]["budget_micro"] - billing(state) - reserve
         ceiling = min(PER_CALL[endpoint], remaining)
-        if ceiling < quote:
-            print(f"Skipped {endpoint}: the remaining budget is below its listed price.")
+        if quote is None or ceiling < quote:
+            if state["plan"].get("spider"):
+                # A resumed run must not insert an earlier call ahead of the pending one.
+                skipped.append(key)
+                atomic_json(path, state)
+            if quote is not None:
+                print(f"Skipped {endpoint}: the remaining budget is below its required reservation.")
             return None
     pending = pending_calls(state)
     if pending and set(pending) != {key}:
@@ -370,6 +418,25 @@ def x_posts(data, *, replies=False):
     return output
 
 
+def x_quotes(data, seed_id):
+    output = []
+    for row in data.get("data") or []:
+        post_id, author_id = str(row.get("id", "")), str(row.get("author_id", ""))
+        if not (re.fullmatch(r"[0-9]{1,19}", post_id) and re.fullmatch(r"[0-9]{1,19}", author_id)
+                and row.get("text") and any(
+                    item.get("type") == "quoted" and item.get("id") == seed_id
+                    for item in row.get("referenced_tweets") or []
+                )):
+            continue
+        stamp = row.get("created_at")
+        output.append({
+            "channel": "x", "kind": "quote", "author": f"X user {author_id}",
+            "url": f"https://x.com/i/web/status/{post_id}", "text": row["text"],
+            "published_on": stamp[:10] if stamp else None, "profile": None, "headline": "",
+        })
+    return output
+
+
 def profile_record(data, profile, today):
     row = data.get("element") or {}
     if linkedin_profile(row.get("linkedinUrl")) != profile:
@@ -394,12 +461,17 @@ def profile_record(data, profile, today):
     return person
 
 
-def discover_followups(client, path, state, quotes, posts, people, brief, match_terms, *, since, today, reserve):
-    """Read one page around each selected seed, without following the results again."""
-    terms = list(dict.fromkeys([
+def workflow_signals(brief):
+    return list(dict.fromkeys([
         *brief["signals"],
+        *(search["phrase"] for search in brief.get("searches", []) if search["lane"] == "problem"),
         *(term for search in brief.get("searches", []) for term in search.get("workflow", [])),
     ]))
+
+
+def discover_followups(client, path, state, quotes, posts, people, brief, match_terms, *, since, today, reserve):
+    """Read one page around each selected seed, without following the results again."""
+    terms = workflow_signals(brief)
 
     def current(post):
         return str(since) <= (post["published_on"] or "") <= today
@@ -416,27 +488,37 @@ def discover_followups(client, path, state, quotes, posts, people, brief, match_
         if not seed:
             continue
         if channel == "linkedin":
-            endpoint, params, parse = LINKEDIN_COMMENTS, {"post": seed["url"], "sortBy": "date", "page": 1}, linkedin_comments
+            lookups = [(LINKEDIN_COMMENTS, {"post": seed["url"], "sortBy": "date", "page": 1}, linkedin_comments)]
         else:
-            endpoint, params = X_REPLIES, {"url": seed["url"], "limit": SPIDER_RESULTS}
-            parse = lambda data: x_posts(data, replies=True)
-        # AnyAPI can switch to a dearer reply provider. Leave room for its documented worst case.
-        quote = PER_CALL[endpoint] if endpoint in quotes else None
-        rows = bounded_call(client, path, state, endpoint, params, quote, parse, reserve=reserve)
-        for row in [row for row in rows or [] if row["url"] != seed["url"] and current(row)][:SPIDER_RESULTS]:
-            if channel == "x":
-                post_id = row["url"].rsplit("/", 1)[-1]
-                if post_id == seed["url"].rsplit("/", 1)[-1]:
+            seed_id = seed["url"].rsplit("/", 1)[-1]
+            lookups = [(X_REPLIES, {"url": seed["url"], "limit": SPIDER_RESULTS},
+                        lambda data: x_posts(data, replies=True))]
+            if re.fullmatch(r"[0-9]{1,19}", seed_id):
+                # Fetch post fields only. User expansions add a separately billed resource.
+                lookups.append((X_QUOTES, {"id": seed_id, "max_results": X_QUOTE_PAGE,
+                                           "tweet.fields": "author_id,created_at,referenced_tweets"},
+                                lambda data: x_quotes(data, seed_id)))
+        for endpoint, params, parse in lookups:
+            # AnyAPI can switch to a dearer reply provider. Reserve its documented worst case.
+            quote = (quotes[endpoint] if endpoint == X_QUOTES else PER_CALL[endpoint]) if endpoint in quotes else None
+            rows = bounded_call(client, path, state, endpoint, params, quote, parse, reserve=reserve)
+            for row in [item for item in rows or [] if item["url"] != seed["url"] and current(item)][:SPIDER_RESULTS]:
+                kind = row["kind"]
+                if channel == "x":
+                    post_id = row["url"].rsplit("/", 1)[-1]
+                    if post_id == seed_id:
+                        continue
+                    row = x_by_id.setdefault(post_id, row)
+                observed = posts.setdefault(row["url"], dict(row))
+                if channel == "x" and (observed["kind"] == "post" or kind == "quote"):
+                    observed["kind"] = kind
+                if observed["kind"] == "post":
                     continue
-                row = x_by_id.setdefault(post_id, row)
-            observed = posts.setdefault(row["url"], dict(row))
-            if observed["kind"] == "post":
-                continue
-            observed.setdefault("parent_url", seed["url"])
-            found_by = {"lane": "thread", "seed_url": seed["url"], "kind": row["kind"]}
-            provenance = observed.setdefault("found_by", [])
-            if found_by not in provenance:
-                provenance.append(found_by)
+                observed.setdefault("parent_url", seed["url"])
+                found_by = {"lane": "thread", "seed_url": seed["url"], "kind": kind}
+                provenance = observed.setdefault("found_by", [])
+                if found_by not in provenance:
+                    provenance.append(found_by)
 
     for seed in seeds:
         person = people.get(seed["profile"])
@@ -490,7 +572,8 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
     for story in story_searches:
         print(f"  Customer stories [{story['competitor']}]: {story_query(story)}", flush=True)
     if spider:
-        print("  Follow-ups: up to one LinkedIn comment page, one X reply page, and one employer search.", flush=True)
+        print("  Follow-ups: one LinkedIn comment page, one X reply page, and one employer search at most.", flush=True)
+        print("  A metered read-only X connection also enables one page of quote posts.", flush=True)
     if args.dry_run:
         return None
 
@@ -512,7 +595,7 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         endpoints.add(WEB)
     if enrich:
         plan["work_email"] = True
-    quotes = client.preflight(endpoints)
+    quotes = client.preflight(endpoints, include_x_quotes=True) if spider else client.preflight(endpoints)
     minimum = (quotes[LINKEDIN] * pages + quotes[X]) * len(terms) + quotes.get(WEB, 0) * len(story_searches)
     if budget < minimum:
         raise ValueError("The budget is below the listed cost of the planned searches. Reduce --searches or raise the cap.")
@@ -602,15 +685,21 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
         people = {}
         checked = set()
 
-        def check_profiles(limit):
+        def check_profiles(limit, *, choose_seeds=False):
             if len(checked) >= limit:
                 return
+            signals = workflow_signals(brief) if choose_seeds else brief["signals"]
+
+            def rank(post):
+                matches = match_terms(post["text"], signals)
+                return (choose_seeds and bool(matches and FIRSTHAND.search(post["text"])),
+                        bool(match_terms(post["headline"], brief["target_roles"])),
+                        len(matches), post["published_on"])
+
             ranked = sorted(
                 (post for post in posts.values() if post["profile"]
                  and str(since) <= (post["published_on"] or "") <= today),
-                key=lambda post: (bool(match_terms(post["headline"], brief["target_roles"])),
-                                  len(match_terms(post["text"], brief["signals"])), post["published_on"]),
-                reverse=True,
+                key=rank, reverse=True,
             )
             for profile in dict.fromkeys(post["profile"] for post in ranked):
                 if profile in checked:
@@ -625,7 +714,7 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
 
         employer = None
         if spider:
-            check_profiles(min(2, args.profiles))
+            check_profiles(min(2, args.profiles), choose_seeds=True)
             employer = discover_followups(client, path, state, quotes, posts, people, brief, match_terms,
                                           since=since, today=today, reserve=email_reserve)
         check_profiles(args.profiles)
@@ -637,11 +726,17 @@ def run_live(brief, args, match_terms, discovery_terms, *, enrich=None):
                     person["employer_signal"] = {key: employer[key] for key in ("company_url", "seed_url")}
 
         # Keep the provider's employer filter as a discovery hint until we check the current role.
-        kept = [
-            post for post in posts.values()
-            if not post.get("employer_search") or not people.get(post["profile"])
-            or people[post["profile"]].get("company_url") == post["employer_search"]
-        ]
+        kept = []
+        for post in posts.values():
+            person = people.get(post["profile"])
+            if person:
+                company = person.get("company_url")
+                if post.get("employer_search") and company != post["employer_search"]:
+                    continue
+                if "found_by" in post:
+                    post["found_by"] = [entry for entry in post["found_by"]
+                                        if entry.get("lane") != "employer" or entry.get("company") == company]
+            kept.append(post)
         source_ids = {post["url"]: f"treg-{index}" for index, post in enumerate(kept, 1)}
         observations = []
         for post in kept:

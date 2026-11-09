@@ -75,7 +75,7 @@ The [Heidi](../examples/blackbird/heidi.toml), [Dovetail](../examples/blackbird/
 
 ## Run a live search
 
-Sign in to the [Treg dashboard](https://treg.to/app?ref=docs). Use a team with prepaid balance and no connected provider keys or custom tools. Copy the team slug and create an API key for that team. Pudding uses that key as its token. Keep it out of the brief and repository.
+Sign in to the [Treg dashboard](https://treg.to/app?ref=docs). Use a team with prepaid balance and no custom provider keys or tools. You can add one [Treg-managed read-only X connection](#include-x-quote-posts). Copy the team slug and create an API key for that team. Pudding uses that key as its token. Keep it out of the brief and repository.
 
 Set these in the terminal where you’ll run Pudding. Paste your token at the prompt and press Enter.
 
@@ -119,7 +119,17 @@ Add `--spider` to `walk --live`, `pilot run`, or `live` to follow promising resu
 
 Pudding reads one page of comments on a selected LinkedIn post and one page of replies on a selected X post. When a seed author has a verified current role that fits your brief and describes doing the work, Pudding also searches for relevant LinkedIn posts by people at that employer. It adds the results to the same review queue and keeps the link that led to each source.
 
-A verified connection to that team can move someone up for review. The shortlist still needs current evidence from that person's own words. X replies with unresolved identities stay on hold, and X quote threads can be supplied through an offline corpus. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Keep `--spider` on the continuation command if a run is interrupted.
+A verified connection to that team can move someone up for review. The shortlist still needs current evidence from that person's own words. X authors with unresolved identities stay on hold. Follow-ups share the run's budget and role lookup limit. Pudding skips a follow-up if it can't reserve enough for the call. Keep `--spider` on the continuation command if a run is interrupted.
+
+#### Include X quote posts
+
+Treg already provides X search and replies through AnyAPI. To include quote posts, connect X on the same Treg team and choose **Read** access. If you use the Treg CLI, run:
+
+```sh
+treg connections connect --provider x --capability read
+```
+
+Approve access in X and start a new `--spider` run. Pudding checks that Treg meters the connection to your team balance before requesting up to one page of quote posts for the selected X post. It verifies that each result quotes the original post and keeps the original link for review.
 
 ## Bring your own offline records
 

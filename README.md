@@ -46,7 +46,7 @@ Run a live search whenever you want fresh leads. Pudding uses Treg for searches,
 
 Each preview brings back up to 20 people for review. X authors are eligible for the shortlist once you match them to a verified LinkedIn profile. Live runs can add verified work emails when available.
 
-To look beyond the first results, use [follow-up search](docs/guide.md#follow-posts-and-employers). Pudding reads LinkedIn comments and X replies on promising posts and searches for other people posting about the work at a verified employer.
+To look beyond the first results, use [follow-up search](docs/guide.md#follow-posts-and-employers). Pudding reads LinkedIn comments and X replies on promising posts and searches for other people posting about the work at a verified employer. Add a [read-only X connection in Treg](docs/guide.md#include-x-quote-posts) to include quote posts.
 
 After your first live review, open `runs/my-company/runs/live-preview/shortlist.csv`. Pudding prints a command for another pass with the same brief and votes. The next pass skips people whose evidence you’ve already reviewed.
 

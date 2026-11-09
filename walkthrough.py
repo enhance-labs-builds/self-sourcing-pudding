@@ -40,9 +40,9 @@ def example_corpus(brief):
          "profile_url": "https://profiles.example/val-quill", "role_checked_on": today},
     ]
     examples = [
-        ("linkedin", "nia", "Nia Alder", f"We run {term} for new accounts. The handoff still takes our team two calls per account, so we're testing a guided setup for the next cohort."),
-        ("x", "nia", "@nia-example", f"Our team is measuring how long {term} takes before and after our guided setup pilot."),
-        ("linkedin", "devon", "Devon Flint", f"I own {term} at Mothsignal. We've shipped a self-serve path and are comparing completion rates with the previous manual process."),
+        ("linkedin", "nia", "Nia Alder", f"I own {term} on my team. A manual step failed last week and it took me two hours to trace what happened."),
+        ("x", "nia", "@nia-example", f"Our team is measuring how much time we spend on {term} after changing one step in the workflow."),
+        ("linkedin", "devon", "Devon Flint", f"I work on {term} at Mothsignal. We tried a new tool last month and are checking whether it reduces manual work."),
         ("x", "val", "@val-example", f"We just launched a product for {term}. Try our new feature."),
         ("x", None, "@unknown-example", f"Has anyone tried changing how they do {term}?"),
     ]

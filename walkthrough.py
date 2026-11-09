@@ -31,18 +31,18 @@ def example_corpus(brief):
     today = date.today().isoformat()
     term = brief["signals"][0]
     people = [
-        {"id": "example-nia", "name": "Nia Alder", "role": brief["target_roles"][0], "company": "Siltglass Studio",
+        {"id": "example-nia", "name": "Nia Alder", "role": brief["target_roles"][0], "company": "Juniper Vale Software",
          "profile_url": "https://profiles.example/nia-alder", "role_checked_on": today,
-         "example_email": "nia@siltglass.example"},
-        {"id": "example-devon", "name": "Devon Flint", "role": brief["target_roles"][-1], "company": "Mothsignal Software",
+         "example_email": "nia@junipervale.example"},
+        {"id": "example-devon", "name": "Devon Flint", "role": brief["target_roles"][-1], "company": "Hearthline Logistics",
          "profile_url": "https://profiles.example/devon-flint", "role_checked_on": today},
-        {"id": "example-val", "name": "Val Quill", "role": "Product Marketing Lead", "company": "BranchDock",
+        {"id": "example-val", "name": "Val Quill", "role": "Product Marketing Lead", "company": "Example Vendor",
          "profile_url": "https://profiles.example/val-quill", "role_checked_on": today},
     ]
     examples = [
         ("linkedin", "nia", "Nia Alder", f"I own {term} on my team. A manual step failed last week and it took me two hours to trace what happened."),
         ("x", "nia", "@nia-example", f"Our team is measuring how much time we spend on {term} after changing one step in the workflow."),
-        ("linkedin", "devon", "Devon Flint", f"I work on {term} at Mothsignal. We tried a new tool last month and are checking whether it reduces manual work."),
+        ("linkedin", "devon", "Devon Flint", f"I work on {term} at Hearthline. We tried a new tool last month and are checking whether it reduces manual work."),
         ("x", "val", "@val-example", f"We just launched a product for {term}. Try our new feature."),
         ("x", None, "@unknown-example", f"Has anyone tried changing how they do {term}?"),
     ]

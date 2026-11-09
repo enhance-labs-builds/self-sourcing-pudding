@@ -11,7 +11,7 @@ python3 rig.py source --out runs/first
 python3 rig.py review --run runs/first
 ```
 
-Between `init` and `plan`, open `brief.toml` and edit it. For a quick experiment, keep only `"BranchDock"` under `alternatives` and replace `signals` with `["pull request"]`. The preview deploy thread drops out of the queue and the competitor discussion stays in.
+The example uses the Ramp Procurement brief and fictional posts. Between `init` and `plan`, open `brief.toml` and edit it. For a quick experiment, keep only `"Zip"` under `alternatives` and replace `signals` with `["security review"]`. The general purchasing thread drops out of the queue and the discussion about evaluating Zip stays in.
 
 Run `init` without `--example` for guided setup. The questions cover your product, target roles, problem language, competitors and workarounds, and what a good fit and a near miss look like. `plan` shows the terms and evidence rules before discovery. To reuse a previous review on the same queue, pass its `review.json` to `review --decisions`.
 
@@ -139,7 +139,7 @@ Approve access in X and start a new `--spider` run. Pudding checks that Treg met
 
 ## Bring your own offline records
 
-Use `source --corpus path/to/corpus.json --out runs/custom` with your own brief. The [example corpus](../examples/preview-environments/corpus.json) defines the format. Set `as_of` to the snapshot date so a repeat run uses the same freshness checks, or override it with `--as-of YYYY-MM-DD`. Keep dates in `YYYY-MM-DD` format.
+Use `source --corpus path/to/corpus.json --out runs/custom` with your own brief. The [fictional Ramp demo corpus](../examples/ramp-demo/corpus.json) shows the format. Set `as_of` to the snapshot date so a repeat run uses the same freshness checks, or override it with `--as-of YYYY-MM-DD`. Keep dates in `YYYY-MM-DD` format.
 
 - A person needs a stable ID, name, role, employer, canonical HTTPS profile URL, and the date the role was last checked.
 - Each observation has a stable ID, channel, kind, author, URL, publication date, and original text. Use the same `person_id` across both channels only after checking the author-to-profile link. Leave it absent when the identity is uncertain.

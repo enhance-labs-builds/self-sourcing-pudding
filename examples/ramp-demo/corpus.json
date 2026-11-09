@@ -5,49 +5,49 @@
     {
       "id": "nia",
       "name": "Nia Alder",
-      "role": "Platform Engineer",
-      "company": "Siltglass Studio",
+      "role": "Head of Procurement",
+      "company": "Juniper Vale Software",
       "profile_url": "https://profiles.example/nia-alder",
       "role_checked_on": "2026-11-06",
-      "example_email": "nia@siltglass.example"
+      "example_email": "nia@junipervale.example"
     },
     {
       "id": "devon",
       "name": "Devon Flint",
-      "role": "Developer Experience Engineer",
-      "company": "Mothsignal Software",
+      "role": "Procurement Operations Lead",
+      "company": "Hearthline Logistics",
       "profile_url": "https://profiles.example/devon-flint",
       "role_checked_on": "2026-11-07"
     },
     {
       "id": "jules",
       "name": "Jules Reed",
-      "role": "Infrastructure Engineer",
-      "company": "Paperjet Systems",
+      "role": "Finance Operations Lead",
+      "company": "Pinewell Foods",
       "profile_url": "https://profiles.example/jules-reed",
       "role_checked_on": "2026-11-07"
     },
     {
       "id": "sam",
       "name": "Sam Plover",
-      "role": "Platform Engineer",
-      "company": "Siltglass Studio",
+      "role": "Finance Manager",
+      "company": "Juniper Vale Software",
       "profile_url": "https://profiles.example/sam-plover",
       "role_checked_on": "2026-11-06"
     },
     {
       "id": "imani",
       "name": "Imani Slate",
-      "role": "DevOps Engineer",
-      "company": "Threadfen",
+      "role": "Controller",
+      "company": "Alderbrook Manufacturing",
       "profile_url": "https://profiles.example/imani-slate",
       "role_checked_on": "2026-11-04"
     },
     {
       "id": "eli",
       "name": "Eli Finch",
-      "role": "Infrastructure Engineer",
-      "company": "Driftglass Software",
+      "role": "Procurement Operations Lead",
+      "company": "Quarryline Services",
       "profile_url": "https://profiles.example/eli-finch",
       "role_checked_on": "2026-06-02"
     },
@@ -55,7 +55,7 @@
       "id": "val",
       "name": "Val Quill",
       "role": "Product Marketing Lead",
-      "company": "BranchDock",
+      "company": "Example Vendor",
       "profile_url": "https://profiles.example/val-quill",
       "role_checked_on": "2026-11-06"
     }
@@ -67,19 +67,19 @@
       "kind": "post",
       "author": "Nia Alder",
       "person_id": "nia",
-      "url": "https://linkedin.example/posts/nia-preview",
+      "url": "https://linkedin.example/posts/nia-procurement",
       "published_on": "2026-11-02",
-      "text": "I maintain the preview deploy for our app team. Builds fail after a database reset, and I spent Friday restoring previews so the team could review changes."
+      "text": "I run procurement intake at Juniper Vale. Purchase approvals kept getting stuck between Slack and a spreadsheet, so we piloted one request form with finance and IT last week."
     },
     {
       "id": "nia-x",
       "channel": "x",
       "kind": "post",
-      "author": "@nia-builds",
+      "author": "@nia-procurement",
       "person_id": "nia",
-      "url": "https://x.example/nia-builds/status/101",
+      "url": "https://x.example/nia-procurement/status/101",
       "published_on": "2026-11-04",
-      "text": "Our preview build now checks the fixture database before creating an environment. Fewer mystery failures in review this week."
+      "text": "We moved vendor onboarding into the same form as purchase approvals. Our finance team can finally see who still needs to sign off."
     },
     {
       "id": "jules-comment",
@@ -88,7 +88,7 @@
       "author": "Jules Reed",
       "person_id": "jules",
       "parent_id": "nia-linkedin",
-      "url": "https://linkedin.example/posts/nia-preview/comments/4",
+      "url": "https://linkedin.example/posts/nia-procurement/comments/4",
       "published_on": "2026-11-03",
       "text": "Following this. Thanks for sharing!"
     },
@@ -99,9 +99,9 @@
       "author": "Sam Plover",
       "person_id": "sam",
       "parent_id": "nia-linkedin",
-      "url": "https://linkedin.example/posts/nia-preview/comments/5",
+      "url": "https://linkedin.example/posts/nia-procurement/comments/5",
       "published_on": "2026-11-03",
-      "text": "I saw this come up in our platform sync. I'll ask who owns it now."
+      "text": "I saw this come up in our finance sync. I'll ask who owns it now."
     },
     {
       "id": "val-launch",
@@ -111,18 +111,18 @@
       "person_id": "val",
       "url": "https://x.example/val-quill/status/201",
       "published_on": "2026-11-05",
-      "text": "BranchDock now supports shared staging. Try it in your team's next release."
+      "text": "Comparing Zip and Coupa for procurement intake? Our new checklist covers security review."
     },
     {
       "id": "devon-quote",
       "channel": "x",
       "kind": "quote",
-      "author": "@devon-infra",
+      "author": "@devon-purchasing",
       "person_id": "devon",
       "parent_id": "val-launch",
-      "url": "https://x.example/devon-infra/status/202",
+      "url": "https://x.example/devon-purchasing/status/202",
       "published_on": "2026-11-06",
-      "text": "I built a deploy script for our frontend team that spins up a fresh database and URL for every pull request. I own the service and we're moving the rest of the apps onto it this month."
+      "text": "We evaluated Ramp and Zip for procurement intake. I put finance approval and security review on the same purchase request so approvals stopped getting lost in Slack."
     },
     {
       "id": "unbound-x",
@@ -132,7 +132,7 @@
       "parent_id": "val-launch",
       "url": "https://x.example/relay-sprocket/status/203",
       "published_on": "2026-11-07",
-      "text": "Our preview environments take twenty minutes to come up. I'm trying a smaller base image."
+      "text": "Our purchase approvals take five days when a request gets lost in Slack. I'm trying a shared intake form."
     },
     {
       "id": "imani-old-source",
@@ -140,9 +140,9 @@
       "kind": "post",
       "author": "Imani Slate",
       "person_id": "imani",
-      "url": "https://linkedin.example/posts/imani-staging",
+      "url": "https://linkedin.example/posts/imani-approvals",
       "published_on": "2026-09-16",
-      "text": "I look after preview environments for our team. We had to rebuild the base image every time a new backend service shipped."
+      "text": "I look after purchase approvals for our finance team. I used to chase down approvers every time a new vendor came in."
     },
     {
       "id": "eli-old-role",
@@ -152,7 +152,7 @@
       "person_id": "eli",
       "url": "https://x.example/eli-finch/status/301",
       "published_on": "2026-11-06",
-      "text": "I was paged again after a preview build hit the shared staging database. I'm separating the credentials."
+      "text": "I rebuilt our vendor onboarding form after we started getting duplicate requests for the same supplier."
     }
   ]
 }

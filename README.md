@@ -4,15 +4,15 @@
 
 Self-Sourcing Pudding is an open-source lead discovery tool for teams that use AI to find their next customers. Start with your company website. Pudding drafts who to look for, what problem they’re working on, and what they might say about it. Edit or approve that brief, then search public posts on LinkedIn and X. Review the evidence, current roles, and verified work emails when available.
 
-[See the sample CSV](examples/preview-environments/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Example briefs](#example-briefs) · [Work email lookup](#find-and-verify-work-emails)
+[See the Ramp sample CSV](examples/ramp-demo/shortlist.csv) · [Try it with your URL](#try-it-with-your-own-url) · [Example briefs](#example-briefs) · [Work email lookup](#find-and-verify-work-emails)
 
 ## See why a lead made the list
 
-Say you sell a tool that helps teams test changes before they ship. In the fictional demo, Nia Alder, a platform engineer, writes:
+The demo uses Ramp Procurement as the product in the brief. It looks for teams trying to fix how they request and approve purchases. One fictional candidate, procurement lead Nia Alder, writes:
 
-> I maintain the preview deploy for our app team. Builds fail after a database reset, and I spent Friday restoring previews so the team could review changes.
+> I run procurement intake at Juniper Vale. Purchase approvals kept getting stuck between Slack and a spreadsheet, so we piloted one request form with finance and IT last week.
 
-That gives you a reason to look up Nia and something specific to talk about. The sample shortlist shows her profile, the dated post, the quote behind the decision, and a fictional work email marked `example`. In a live run you decide who makes the shortlist. A later run can bring someone back when there’s new evidence.
+Nia owns the workflow and is actively changing it. The sample shortlist shows the profile, dated post, and quote behind that decision, plus her fictional work email marked `example`. All people, employers, posts, and addresses in the sample CSV are fictional.
 
 ## Try it with your own URL
 
@@ -38,7 +38,7 @@ You can also download `self-sourcing-pudding-tester.zip` from [GitHub Releases](
 
 ### Run the offline demo
 
-Clone the repo as above and run `python3 rig.py demo` from the repository folder. This recreates the [sample CSV](examples/preview-environments/shortlist.csv) at `runs/demo/shortlist.csv` without any network access.
+Clone the repo as above and run `python3 rig.py demo` from the repository folder. This uses the Ramp brief and recreates the [sample CSV](examples/ramp-demo/shortlist.csv) at `runs/demo/shortlist.csv` without any network access.
 
 ## Example briefs
 

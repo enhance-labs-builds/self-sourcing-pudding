@@ -9,7 +9,8 @@ import json
 import os
 import re
 import tempfile
-from time import time
+import threading
+from time import sleep, time
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -191,7 +192,8 @@ def journal(out, plan, org, resume, *, caller=None):
     if not resume:
         out.mkdir(parents=True, mode=0o700)
         (out / ".gitignore").write_text("*\n", encoding="utf-8")
-    with (out / ".lock").open("a") as lock:
+        (out / ".gitignore").chmod(0o600)
+    with open(os.open(out / ".lock", os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = out / "treg-run.json"
         if resume:
@@ -230,25 +232,26 @@ def call_key(endpoint, params):
     return hashlib.sha256(json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()
 
 
-def prepare_call(path, state, endpoint, params, quote, *, reserve=0):
+def prepare_call(path, state, endpoint, params, quote, *, reserve=0, in_flight=()):
     key = call_key(endpoint, params)
     calls = state["calls"]
     call = calls.get(key)
     retries = sum(1 for other in calls if other.startswith(key + ":rate-limited:"))
-    if call and call["status"] == "rate_limited":
+    if call and call["status"] in {"rate_limited", "refused"}:
         # Keep the receipt, and let this attempt go out under a new idempotency key.
         calls[f"{key}:rate-limited:{retries}"] = calls.pop(key)
         call, retries = None, retries + 1
     if call and call["status"] != "pending":
         return None
     if call is None:
-        remaining = state["plan"]["budget_micro"] - billing(state) - reserve
+        held = sum(other["reserved_micro"] for other in pending_calls(state).values())  # Lookups already on their way.
+        remaining = state["plan"]["budget_micro"] - billing(state) - reserve - held
         ceiling = min(PER_CALL[endpoint], remaining)
         if quote is None or ceiling < quote:
             if quote is not None:
                 print(f"Skipped {endpoint}: the remaining budget is below its required reservation.")
             return None
-    if set(pending_calls(state)) - {key}:
+    if set(pending_calls(state)) - {key} - set(in_flight):
         raise PendingCall("A different request is still pending. No new paid requests were sent. Check Treg Activity.")
     recovering = call is not None
     if recovering:
@@ -312,11 +315,17 @@ def settle_call(path, state, call, recovering, response, transform):
     call.update(status="settled", cost_micro=charged)
     if status == 429 and charged == 0:
         call["status"] = "rate_limited"  # Free and empty: a later run may try it again.
+    elif status in {401, 402} and charged == 0:
+        call["status"] = "refused"  # Treg turned it away for sign-in or balance. Nothing was looked up, so it is tried again.
     if replayed:
         call["replayed"] = True
     try:
         if status == 200 and not headers.get("x-treg-upstream-failed"):
             call["result"] = transform(data)
+        elif status == 402:
+            print(f"Treg refused {endpoint}: the account balance is too low. Add funds, then run this step again.")
+        elif status == 401:
+            print(f"Treg refused {endpoint}: the sign-in was not accepted. Run connect, then this step again.")
         else:
             print(f"{endpoint} returned HTTP {status}. See treg-run.json for the receipt.")
     except (KeyError, TypeError, ValueError, AttributeError) as error:
@@ -335,6 +344,41 @@ def bounded_call(client, path, state, endpoint, params, quote, transform, *, res
         return state["calls"].get(call_key(endpoint, params), {}).get("result")
     call, recovering = prepared
     return settle_call(path, state, call, recovering, send_call(client, call), transform)
+
+
+class Lookups:
+    """One run's paid lookups, safe to make from several threads at once.
+
+    Each lookup reserves its worst-case cost under a lock before it is sent, so lookups in flight together can never
+    add up to more than the cap. A pending call this process did not start still stops everything.
+    """
+
+    def __init__(self, client, path, state):
+        self.client, self.path, self.state = client, path, state
+        self.turn, self.in_flight = threading.Condition(), set()
+
+    def __call__(self, endpoint, params, quote, transform, attempts=3):
+        key = call_key(endpoint, params)
+        for attempt in range(attempts):
+            with self.turn:
+                while key in self.in_flight:  # The same lookup is already on its way: wait and share its answer.
+                    self.turn.wait()
+                prepared = prepare_call(self.path, self.state, endpoint, params, quote, in_flight=self.in_flight)
+                if prepared is None:
+                    return self.state["calls"].get(key, {}).get("result")
+                self.in_flight.add(key)
+            try:
+                response = send_call(self.client, prepared[0])
+                with self.turn:
+                    result = settle_call(self.path, self.state, *prepared, response, transform)
+            finally:
+                with self.turn:
+                    self.in_flight.discard(key)
+                    self.turn.notify_all()
+            if self.state["calls"][key]["status"] != "rate_limited":
+                return result
+            sleep(2 * (attempt + 1))  # The provider asked for a pause. The refusal was free; try again under a new key.
+        return None
 
 
 def linkedin_url(url, kind):

@@ -209,6 +209,13 @@ class AgentRunTest(unittest.TestCase):
                          (["their X name in the LinkedIn profile's public summary"],
                           ["the company on the X profile named on the LinkedIn profile"]))
         self.assertEqual(pudding.x_ties(cut, None, initial, "https://www.linkedin.com/in/e-a"), ([], ["the company on the X profile named on the LinkedIn profile"]))
+        # A namesake shares the name everywhere it appears: on a site named after them, that is still one tie.
+        own_site = {**account, "name": "Ada Example", "handle": "shipfast", "bio": "writing", "website": "https://adaexample.com",
+                    "site": "https://adaexample.com/", "site_text": "Ada Example writes about pipelines.", "company": "", "site_name": "adaexample"}
+        who, where = pudding.x_ties(person("Ada Example", "Ada Example"), None, own_site, "https://www.linkedin.com/in/ada-9")
+        self.assertEqual((len(who), where), (2, []))
+        self.assertFalse(pudding.x_confirmed("web search: same name and adaexample", who, where, own_site))
+        self.assertTrue(pudding.x_confirmed("web search: same name", [*who, "the same handle"], where, own_site))
         # A link they posted themselves stands, unless a full display name says it is someone else.
         self.assertTrue(pudding.x_confirmed("LinkedIn link on the X profile", [], [], account))
         self.assertFalse(pudding.x_confirmed("LinkedIn link on the X profile", [], [], named))
@@ -259,6 +266,7 @@ class AgentRunTest(unittest.TestCase):
                                                   "Fig Labs named on the X profile or its website, "
                                                   "the employer's own website linked from the X profile")
         self.assertIn("# Held X authors — 0", (self.project / "held.md").read_text())
+        self.assertEqual(pudding.held_sheet(self.project, posts, {"P0001": {"account": {}, "verified": None}}, {"P0001": {"verdict": "no"}}), 0)
         # A named profile that shares only a name is kept, and the reviewer is told. What a web search showed is remembered.
         self.pages.clear()
         import contextlib, io
@@ -429,16 +437,28 @@ class AgentRunTest(unittest.TestCase):
         self.assertIsNone(pudding.owner_match("Chief of Staff", ["CTO", "Head of Engineering"]))
         self.assertIsNone(pudding.owner_match("Vice President, Global Solutions Engineering", ["CTO", "VP Engineering"]))
         self.assertEqual(pudding.owner_match("Vice President Engineering", ["CTO", "VP Engineering"]), "named owner title")
+        for role in ("Executive Assistant to Co-Founder / COO", "Executive Assistant to the Vice Chairman, President & CEO",
+                     "Advisor to the CEO", "Assistant VP Engineering"):
+            self.assertIsNone(pudding.owner_match(role, ["CTO", "VP Engineering", "Founder"]))
+        self.assertEqual(pudding.owner_match("Managing Director", ["Founder", "CTO"]), "company leader, not the named owner")
+        self.assertEqual(pudding.owner_match("Chief Operating Officer", ["COO"]), "named owner title")
+        self.assertEqual(pudding.owner_match("COO", ["Chief Operating Officer"]), "named owner title")
+        # A board shortens the name; the ad spells it out. A namesake the ad never mentions stays out.
+        ad = {"company": "Pear", "text": "At Pear Wealth we build software for advisors."}
+        self.assertTrue(pudding.at_employer("Pear Wealth", ad))
+        self.assertFalse(pudding.at_employer("Pear Games Group", ad))
+        self.assertTrue(pudding.at_employer("Plum", {"company": "Plum AI", "text": "We build agents."}))
+        self.assertFalse(pudding.at_employer("Harbour 3D", {"company": "Harbour", "text": "Harbour is a finance tool."}))
         # Two co-founders both hold a named title: the one whose title the agent listed first is the owner.
         titles = ["CTO", "Co-founder"]
         self.assertLess(pudding.owner_order("Co-Founder & CTO", titles), pudding.owner_order("Co-Founder & CRO", titles))
-        self.assertTrue(pudding.same_employer("LIQID", "LIQID Investments GmbH"))
+        self.assertTrue(pudding.same_employer("Fenwick", "Fenwick Investments GmbH"))
         self.assertEqual(pudding.owner_match("RevOps Manager", ["Head of Revenue Operations"]), "named owner title")
         self.assertFalse(pudding.same_employer("Fig", "Figma"))
-        self.assertFalse(pudding.same_employer("Litmus", "Litmus7"))
-        self.assertFalse(pudding.same_employer("Campfire", "Campfire 3D"))
-        self.assertTrue(pudding.same_employer("Rakuten Group, Inc.", "Rakuten"))
-        self.assertTrue(pudding.same_employer("AccountsIQ - Voted Mid-Market Software of the Year", "AccountsIQ"))
+        self.assertFalse(pudding.same_employer("Tarn", "Tarn7"))
+        self.assertFalse(pudding.same_employer("Harbour", "Harbour 3D"))
+        self.assertTrue(pudding.same_employer("Orrin Group, Inc.", "Orrin"))
+        self.assertTrue(pudding.same_employer("Ledgerly - Voted Mid-Market Software of the Year", "Ledgerly"))
         # With nobody known, the search ranks by indexed current title and the most senior fit wins.
         self.write("people.json", {})
         work = lambda title, company="Fig": {"title": title, "company": {"name": company}, "dates": {"from": "2024"}}
@@ -486,6 +506,67 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual((people["J001"]["profile_url"], people["J001"]["identity_basis"]),
                          ("https://www.linkedin.com/in/head", "named owner title"))
 
+    def test_a_colleagues_profile_leads_to_the_owner_through_the_company_page(self):
+        self.write("jobs.json", {"J001": {"id": "J001", "url": "https://jobs.ashbyhq.com/fig/1", "company": "Fig", "title": "RevOps Lead",
+                                          "published_on": "2026-10-01", "text": "Fig Labs is hiring. You will own our CRM migration."}})
+        self.write("job-grades.json", {"J001": {"verdict": "mandate", "fit": "look", "quote": "You will own our CRM migration",
+                                                "why": "Assigns the migration.", "owner_titles": ["Head of Revenue Operations"]}})
+        page, asked = "https://www.linkedin.com/company/fig-labs", []
+
+        def call(endpoint, params, transform):
+            if endpoint == t.SEMANTIC_PEOPLE:  # The web only knows an analyst there.
+                return transform({"results": [{"url": "https://www.linkedin.com/in/analyst", "title": "", "entities": [{"properties": {
+                    "workHistory": [{"title": "Revenue Operations Analyst", "company": {"name": "Fig"}, "dates": {"from": "2024"}}]}}]}]})
+            if endpoint == t.BUYER_WEB:
+                return transform({"organic": []})
+            if endpoint == t.PEOPLE:
+                asked.append((params["currentCompany"], params["title"]))
+                return transform({"elements": [{"linkedinUrl": "https://www.linkedin.com/in/head", "name": "Ada",
+                                                "position": "Head of Revenue Operations at Fig Labs"}]})
+            role = "Head of Revenue Operations" if params["url"].endswith("/head") else "Revenue Operations Analyst"
+            return transform(profile([{"position": role, "companyName": "Fig Labs", "companyLinkedinUrl": page}], url=params["url"]))
+
+        pudding.job_contacts(self.project, call, 4)
+        entry = json.loads((self.project / "people.json").read_text())["J001"]
+        # The analyst's employer, "Fig Labs", is the ad's "Fig" because the ad spells it out; their profile gives the page.
+        self.assertEqual(asked, [(page, "Head of Revenue Operations")])
+        self.assertEqual((entry["profile_url"], entry["identity_basis"]), ("https://www.linkedin.com/in/head", "named owner title"))
+
+    def test_people_called_the_company_name_do_not_crowd_out_its_staff(self):
+        self.write("jobs.json", {"J001": {"id": "J001", "url": "https://jobs.ashbyhq.com/marlow/1", "company": "Marlow", "title": "Ops Lead",
+                                          "published_on": "2026-10-01", "text": "Marlow is hiring. You will own our CRM migration."}})
+        self.write("job-grades.json", {"J001": {"verdict": "mandate", "fit": "look", "quote": "You will own our CRM migration",
+                                                "why": "Assigns the migration.", "owner_titles": ["COO"]}})
+        work = lambda title: {"title": title, "company": {"name": "Marlow"}, "dates": {"from": "2024"}}
+        looked_up = []
+
+        def call(endpoint, params, transform):
+            if endpoint == t.SEMANTIC_PEOPLE:  # The index ties the founder to this employer.
+                return transform({"results": [{"url": "https://www.linkedin.com/in/founder", "title": "",
+                                               "entities": [{"properties": {"workHistory": [work("Cofounder & CEO")]}}]}]})
+            if endpoint == t.BUYER_WEB:  # The web finds six operating chiefs whose surname is Marlow.
+                return transform({"organic": [{"link": f"https://www.linkedin.com/in/marlow-{n}", "snippet": "",
+                                               "title": f"Sam Marlow - Chief Operating Officer - Firm {n}"} for n in range(6)]})
+            looked_up.append(params["url"].rsplit("/", 1)[-1])
+            if params["url"].endswith("/founder"):
+                return transform(profile([{"position": "Cofounder & CEO", "companyName": "Marlow"}], url=params["url"]))
+            return transform(profile([{"position": "Chief Operating Officer", "companyName": "Elsewhere"}], url=params["url"]))
+
+        pudding.job_contacts(self.project, call, 4)
+        entry = json.loads((self.project / "people.json").read_text())["J001"]
+        self.assertEqual(looked_up[0], "founder")  # The person tied to the employer is checked before the name-only hits.
+        # Someone who lists this employer as their second current role is still its owner.
+        self.write("people.json", {})
+        two_jobs = lambda endpoint, params, transform: transform(profile(
+            [{"position": "Head of AI", "companyName": "Marlow Teach"}, {"position": "COO", "companyName": "Marlow"}], url=params["url"]
+        )) if endpoint == t.PROFILE else transform({"results": [{"url": "https://www.linkedin.com/in/two", "title": "", "entities": [
+            {"properties": {"workHistory": [work("COO")]}}]}], "organic": []})
+        pudding.job_contacts(self.project, two_jobs, 4)
+        second = json.loads((self.project / "people.json").read_text())["J001"]["verified"]
+        self.assertEqual((second["role"], second["company"], second["other_roles"]), ("COO", "Marlow", ["Head of AI, Marlow Teach"]))
+        self.assertEqual((entry["verified"]["role"], entry["identity_basis"]), ("Cofounder & CEO", "company leader, not the named owner"))
+        self.assertEqual(len(looked_up), 7)  # Six strangers cost a lookup each without ending the search early; then it stops.
+
     def test_job_ads_come_from_linkedin_with_the_employer_and_one_ad_each(self):
         page = "https://www.linkedin.com/company/fig"
         ad = lambda title, company, state="LISTED": {"element": {
@@ -520,6 +601,13 @@ class AgentRunTest(unittest.TestCase):
         sheet = (self.project / "jobs-sheet.md").read_text()
         self.assertIn("Employer: 14 people on LinkedIn · Software Development · Invoices for small teams.", sheet)
         self.assertIn("Hiring team named on the ad: Ada Example", sheet)
+        self.write("job-grades.json", {"J001": {"verdict": "mandate", "fit": "strong", "quote": "You will own our CRM migration",
+                                                "why": "Assigns the migration.", "owner_titles": ["Head of Revenue Operations"]}})
+        self.write("suppress.json", {"profiles": [], "companies": ["Fig"], "domains": [], "company_pages": [], "unread": 0})
+        pudding.job_contacts(self.project, lambda *_: self.fail("A suppressed employer was looked up."), 4)
+        self.assertIn("suppression list", json.loads((self.project / "people.json").read_text())["J001"]["hold"])
+        (self.project / "suppress.json").unlink()
+        self.write("people.json", {})
         # The person named on the ad is checked first, and the employer record comes from the ad at no extra cost.
         self.write("job-grades.json", {"J001": {"verdict": "mandate", "fit": "strong", "quote": "You will own our CRM migration",
                                                 "why": "Assigns the migration.", "owner_titles": ["Head of Revenue Operations"]}})
@@ -545,7 +633,7 @@ class AgentRunTest(unittest.TestCase):
         self.write("plan.json", {**PLAN, "job_queries": ['"CRM migration" revops', '"CRM migration" "HubSpot admin"', '"RevOps tooling"']})
         pudding.jobs_search(self.project, lambda endpoint, params, transform: searched.append(params.get("search")) or [], 12, 20)
         self.assertEqual([phrase for phrase in searched if phrase], ['"CRM migration"', '"RevOps tooling"'])
-        self.assertEqual(pudding.brand("Wiz, Inc."), "Wiz")
+        self.assertEqual(pudding.brand("Fig, Inc."), "Fig")
         self.write("job-grades.json", {"J001": "customer"})
         self.assertEqual(pudding.check_job_grades(self.project)[1]["J001"]["verdict"], "customer")
 
@@ -585,12 +673,17 @@ class AgentRunTest(unittest.TestCase):
         self.assertTrue(cut.startswith("… ") and cut.endswith(". …"))
         self.assertIn("Our team cut review time in half. We still miss regressions.", cut)
         self.assertEqual(pudding.excerpt("One line.\nTwo lines.", ["Tool7"]), "One line. Two lines.")
+        # A job ad's legal boilerplate is full of "we" and "our"; its excerpt opens on the topic instead.
+        ad = ("We are an equal opportunity employer. Our benefits are great. We value our people. " * 40
+              + "You will own the Tool7 rollout and report to the COO. " + "Apply today. " * 40)
+        self.assertIn("You will own the Tool7 rollout", pudding.excerpt(ad, ["Tool7"], 300, voice=False))
+        self.assertNotIn("You will own the Tool7 rollout", pudding.excerpt(ad, ["Tool7"], 300))
         self.assertNotIn("<script", pudding.page_text("<p>Hello</p><script>var a = 1; self.__next_f.push(["))
 
     def test_a_second_run_skips_people_already_seen_and_learns_from_answers(self):
         posts = {}
         other = {**POST, "author": "Bo New", "profile": "https://www.linkedin.com/in/bo", "url": POST["url"].replace("0001", "0005")}
-        pudding.add_posts(posts, [POST, other], "q")
+        pudding.add_posts(posts, [POST, other], PLAN["linkedin_queries"][0])
         grade = {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1 in March."}
         person = lambda name: {"name": name, "role": "CEO", "company": "Fig", "role_basis": "current role", "other_roles": []}
         entry = lambda post, name: {"channel": "linkedin", "source_url": post["url"], "hold": None,
@@ -600,6 +693,12 @@ class AgentRunTest(unittest.TestCase):
         self.write("grades.json", {"P0001": grade})
         self.write("people.json", {"P0001": entry(POST, "Ada Example")})
         self.write("review.json", {POST["profile"]: {"vote": "yes", "note": "Exactly our buyer."}})
+        self.write("plan.json", {**PLAN, "product": "Last week's plan."})
+        self.write("jobs.json", {"J001": {"id": "J001", "url": "https://jobs.ashbyhq.com/fig/1", "company": "Fig, Inc.", "title": "Lead",
+                                          "published_on": "2026-10-01", "text": "You will own our CRM migration."},
+                                 "J002": {"id": "J002", "url": "https://jobs.ashbyhq.com/pear/1", "company": "Pear", "title": "Lead",
+                                          "published_on": "2026-10-01", "text": "Captured, never read."}})
+        self.write("job-grades.json", {"J001": "no"})
 
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -610,6 +709,26 @@ class AgentRunTest(unittest.TestCase):
         feedback = (self.project / "feedback.md").read_text()
         self.assertIn("## Said yes (1)", feedback)
         self.assertIn("Reviewer's note: Exactly our buyer.", feedback)
+        # The follow-up starts from last time's plan, sees what each search found, and reads nobody and no employer twice.
+        self.assertEqual(json.loads((self.project / "plan.json").read_text())["product"], "Last week's plan.")
+        self.assertIn('- `"Tool0" "we switched"`: 1 posts, 1 prospects, 1 on the shortlist', feedback)
+        self.assertIn('- `"Tool1" "we switched"`: 0 posts, 0 prospects, 0 on the shortlist', feedback)
+        self.assertIn('- `"CRM migration" revops` (job ads): 0 ads, 0 graded as a signal', feedback)
+        self.assertEqual(json.loads((self.project / "read-before.json").read_text()), ["linkedin:7000000000000000001"])
+        self.assertEqual(json.loads((self.project / "ads-before.json").read_text()), [pudding.job_board.company_key("Fig")])
+        again = Path(folder.name) / "next"
+        pudding.start(again, "https://example.com", "1.00", None, previous=earlier)
+        from datetime import date, datetime, timezone
+        gap = (datetime.now(timezone.utc).date() - date(2026, 11, 10)).days + 2
+        self.assertEqual(json.loads((again / "project.json").read_text())["window_days"], max(7, min(45, gap)))
+        self.assertFalse((again / "suppress.json").exists())
+        t.atomic_json(earlier / "suppress.json", {"profiles": [], "companies": ["Pear"], "domains": [], "company_pages": [], "unread": 0})
+        third = Path(folder.name) / "third"
+        pudding.start(third, "https://example.com", "1.00", None, previous=earlier)
+        self.assertEqual(json.loads((third / "suppress.json").read_text())["companies"], ["Pear"])
+        fresh = Path(folder.name) / "first"
+        pudding.start(fresh, "https://example.com", "1.00", None)
+        self.assertEqual(json.loads((fresh / "project.json").read_text())["window_days"], 45)
         self.write("posts.json", posts)
         self.write("grades.json", {"P0001": grade, "P0002": grade})
         self.write("people.json", {"P0001": entry(POST, "Ada Example"), "P0002": entry(other, "Bo New")})
@@ -622,6 +741,14 @@ class AgentRunTest(unittest.TestCase):
         pudding.sheet(self.project, 10)
         sheet = (self.project / "sheet.md").read_text()
         self.assertEqual(("Bo New" in sheet, "Ada Example" in sheet), (True, False))
+        # An author who was read and passed over is read again when they post something new.
+        (self.project / "previous.json").write_text("{}")
+        later = {**POST, "url": POST["url"].replace("0001", "0009"), "text": "Our team is evaluating a move off Tool1 this month."}
+        pudding.add_posts(posts, [later], "q")
+        self.write("posts.json", posts)
+        pudding.sheet(self.project, 10)
+        sheet = (self.project / "sheet.md").read_text()
+        self.assertEqual(("evaluating a move off Tool1" in sheet, sheet.count("**Ada Example**")), (True, 1))
         self.assertEqual(len(pudding.plan_notes({**PLAN, "customers": []})), 1)
         self.assertEqual(pudding.plan_notes({**PLAN, "customers": []}, searched=True), [])
 
@@ -662,6 +789,12 @@ class AgentRunTest(unittest.TestCase):
             row = next(csv.DictReader(file))
         self.assertEqual((row["work_email"], row["work_email_status"], row["your_answer"], row["company_domain"]),
                          ("ada@fig.example", "verified", "yes", "fig.example"))
+        refused = lambda endpoint, params, transform: None
+        refused.declined = lambda endpoint, params: endpoint == t.WORK_EMAIL
+        person_now = json.loads((self.project / "people.json").read_text())["P0001"]["verified"]
+        capped = lambda endpoint, params, transform: call(endpoint, params, transform) if endpoint == t.COMPANY else refused(endpoint, params, transform)
+        capped.declined = refused.declined
+        self.assertIn("the spend cap was reached", pudding.work_email(capped, POST["profile"], person_now)["status"])
         found["emails"].append({"email": "a.example@fig.example"})
         self.assertIsNone(pudding.work_address({"output": {"found": True, "data": {"linkedinUrl": POST["profile"], **found}}},
                                                POST["profile"], "fig.example"))
@@ -801,8 +934,31 @@ class AgentRunTest(unittest.TestCase):
             row = next(csv.DictReader(file))
         self.assertEqual((row["company_size"], row["company_industry"], row["company_about"]),
                          ("59", "Software Development", "Invoices for small teams."))
+        self.assertEqual((row["company_domain"], row["id"], row["run_date"], row["found_by"], row["x_handle"]),
+                         ("fig.example", "P0001", "2026-11-10", "q", ""))
         self.assertIn("59 people · Software Development", (self.project / "shortlist.md").read_text())
         # Another company's page is not this employer, and a missing website only blocks the email step.
+# A domain on the suppression list is the employer's own website, whatever the company is called.
+        self.write("people.json", {})
+        self.write("suppress.json", {"profiles": [], "companies": [], "domains": ["getfig.example"], "company_pages": [], "unread": 0})
+        company["element"]["website"] = "https://www.getfig.example/about"
+        pudding.verify(self.project, call, 5)
+        self.assertEqual(json.loads((self.project / "people.json").read_text())["P0001"]["hold"], "On your suppression list (getfig.example).")
+        company["element"]["website"] = "www.fig.example/?utm_source=linkedin"
+        (self.project / "suppress.json").unlink()
+        # The cap can be raised by hand, never lowered, and the ledger follows it.
+        (self.project / "ledger").mkdir()
+        self.write("ledger/treg-run.json", {"plan": {"budget_micro": 1_000_000}, "org": "o", "id": "r", "calls": {
+            "a": {"status": "settled", "cost_micro": 900_000}}})
+        with self.assertRaisesRegex(ValueError, "can only be raised"):
+            pudding.raise_cap(self.project, "0.50")
+        pudding.raise_cap(self.project, "2.50")
+        self.assertEqual(json.loads((self.project / "project.json").read_text())["budget_micro"], 2_500_000)
+        self.assertEqual(json.loads((self.project / "ledger/treg-run.json").read_text())["plan"]["budget_micro"], 2_500_000)
+        self.write("ledger/treg-run.json", {"plan": {"budget_micro": 2_500_000}, "org": "o", "id": "r", "calls": {
+            "a": {"status": "pending", "reserved_micro": 5_000}}})
+        with self.assertRaisesRegex(ValueError, "still unsettled"):
+            pudding.raise_cap(self.project, "3.00")
         self.assertIsNone(pudding.employer_record(company, page + "-other"))
         self.assertIsNone(pudding.employer_record({"element": {"linkedinUrl": page, "name": "Fig"}}, page)["url"])
         self.assertEqual(pudding.employer_line({"employees": 1200, "industry": "", "about": "Freight."}), "1,200 people on LinkedIn · Freight.")
@@ -848,6 +1004,10 @@ class AgentRunTest(unittest.TestCase):
                            "Sam,Roe,Founder,Oriole Dune,sam@gmail.com,\n"
                            "Kit,Vale,CTO,,,https://www.linkedin.com/company/hollis-bay/about/\n")
         crm = pudding.suppression(listing)
+        # An accounts export with a website column leaves out the company on that domain.
+        accounts = self.project / "accounts.csv"
+        accounts.write_text("Account Name,Website,Owner\nGetfig,https://www.getfig.example/about,Sam\nPear,pear.example,Sam\n")
+        self.assertEqual(pudding.suppression(accounts)["domains"], ["getfig.example", "pear.example"])
         self.assertEqual(crm, {"profiles": ["https://www.linkedin.com/in/dana-lee"], "companies": ["Brindle Freight, Inc.", "Oriole Dune"],
                                "domains": ["brindle.example"], "company_pages": ["https://www.linkedin.com/company/hollis-bay"],
                                "unread": 0})
@@ -889,11 +1049,20 @@ class AgentRunTest(unittest.TestCase):
         self.write("posts.json", posts)
         self.write("grades.json", {"P0001": {"verdict": "prospect", "fit": "strong", "why": "Own team.",
                                              "quote": "We switched off Tool1 in March."}})
-        call = lambda endpoint, params, transform: None
+        asked = []
+        call = lambda endpoint, params, transform: asked.append(endpoint)
         call.declined = lambda endpoint, params: True
+        call.refused = lambda: len(asked)
         pudding.verify(self.project, call, 10)
-        self.assertEqual(json.loads((self.project / "people.json").read_text())["P0001"]["hold"],
-                         "The spend cap was reached before this person could be checked.")
+        self.assertEqual(json.loads((self.project / "people.json").read_text())["P0001"]["hold"], pudding.CAPPED)
+        # Once the cap is raised, plain verify tries that person again, and a refused search is not called an empty one.
+        role = lambda endpoint, params, transform: transform(profile([{"position": "CEO", "companyName": "Fig"}])) if endpoint == t.PROFILE else None
+        pudding.verify(self.project, role, 10)
+        self.assertEqual(json.loads((self.project / "people.json").read_text())["P0001"]["verified"]["role"], "CEO")
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()) as shown:
+            pudding.search(self.project, call)
+        self.assertNotIn("returned nothing", shown.getvalue())
         self.assertEqual(pudding.main(["status"]), 1)  # A command other than connect needs a run folder.
         self.assertTrue(pudding.listed("Salesforce.com", ["Salesforce"]))
         self.assertTrue(pudding.listed("Acme GmbH", ["Acme"]))

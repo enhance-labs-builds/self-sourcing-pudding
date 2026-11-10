@@ -10,7 +10,7 @@ Pudding does the lookups, enforces the cap, keeps the receipts and rejects any q
 
 - Python 3.11 or later, from the repository folder.
 - A Treg team with no connected provider keys or custom tools: set `TREG_TOKEN` and `TREG_ORG`, or sign in with the Treg CLI. If a paid step says the team can't be used, tell the user and stop.
-- A private project folder outside the repository. It will hold real names and posts. Pudding keeps every file in it readable by you alone.
+- A private project folder outside the repository, one per run, named by date under one folder such as `~/pudding-runs/acme/2026-11-10`. It will hold real names and posts. Pudding keeps every file in it readable by you alone.
 
 Check the sign-in first. It costs nothing:
 
@@ -18,15 +18,22 @@ Check the sign-in first. It costs nothing:
 python3 pudding.py connect
 ```
 
-If it fails, walk the user through creating a Treg team and setting the two values in the terminal themselves. Never ask them to paste a token into the chat.
+If it fails, the user needs a Treg account. With their go-ahead, install the Treg command-line tool and sign in:
+
+```sh
+curl -fsSL https://treg.to/install.sh | sh
+treg login
+```
+
+`treg login` opens their browser to sign in with Google, GitHub or an emailed code, and a new account starts with one team. Then run `connect` again. Someone who already has a team token can set `TREG_TOKEN` and `TREG_ORG` in the terminal instead. Never ask them to paste a token into the chat.
 
 Every command takes the project folder first:
 
 ```sh
-python3 pudding.py --project ~/pudding-runs/acme <command>
+python3 pudding.py --project ~/pudding-runs/acme/2026-11-10 <command>
 ```
 
-Run `status` at any point to see the funnel and the spend. Paid steps are safe to rerun: a completed lookup is never charged twice. A paid step can run for a few minutes without printing.
+Run `status` at any point to see the funnel and the spend. Paid steps are safe to rerun: a completed lookup is never charged twice. A paid step makes its lookups four at a time and can still take two or three minutes; let it finish, and do not pipe it through `tail` or `head`, which hides its progress.
 
 ## 1. Read the site and write the plan
 
@@ -34,7 +41,9 @@ Run `status` at any point to see the funnel and the spend. Paid steps are safe t
 python3 pudding.py --project DIR start https://example.com --budget-usd 1.00
 ```
 
-If there was an earlier run, add `--previous OLD_DIR`. Pudding then leaves out everyone already shown and writes `feedback.md`: what the reviewer said yes and no to. Read it before you plan and before you grade.
+The amount after `--budget-usd` is a hard cap, not a target: use the figure the user gave you. Each paid step says how many lookups the cap refused. Only the user can decide to spend more: when they do, `budget 2.00` raises this run's cap, and rerunning the step picks up what was refused. Never raise it yourself.
+
+If there was an earlier run, add `--previous OLD_DIR`. See "Following runs" below.
 
 If the user has people or companies already in their pipeline, add `--suppress FILE`. It takes a plain list (one LinkedIn link, work email, domain or company name per line) or a CRM export with a header row. `start` says how many lines it could not use; tell the user if that number is large.
 
@@ -98,6 +107,26 @@ Then validate. Fix every error and act on every note.
 python3 pudding.py --project DIR check
 ```
 
+### Following runs
+
+A run every week keeps the list fresh: the people worth writing to are the ones who posted this week.
+
+```sh
+python3 pudding.py --project ~/pudding-runs/acme/2026-11-17 start https://example.com --budget-usd 1.00 --previous ~/pudding-runs/acme/2026-11-10
+```
+
+`--previous` makes this a follow-up. Pudding then:
+
+- copies last time's `plan.json`, so you revise a plan instead of writing one;
+- writes `feedback.md`: what the reviewer said yes and no to, and what each search found last time;
+- reads only posts since the last run, with two days' overlap;
+- leaves out every post and employer already read, and everyone already shown;
+- keeps the same suppression list, unless you pass a new one.
+
+Read `feedback.md` first. Keep the searches that found people. Replace the ones that found none with new angles, so about a third of the plan is new each run. Lean towards people like the reviewer's yes answers. Then run the steps as usual. There is less to read: stop when the stop rule says, and at 240 authors in any case.
+
+Name each run folder by date inside one folder for the company, and use the latest one as `--previous`. Report who is new this run, not the running total.
+
 ## 2. Search and read
 
 ```sh
@@ -134,7 +163,7 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 
 **Fit decides who the reviewer sees first.** `strong` is someone the user would want to talk to this week: the right buyer, describing this problem now, and not yet committed to another answer. Someone who finished switching last month is `look` at best. `look` is worth a look. `low` goes in its own section: use it for someone who has just committed to a competitor, runs a vertical tool, or sits outside the buyer.
 
-**Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell, implement or recruit for this category. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
+**Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell a competing product, sell services around this category's tools, or recruit for it. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
 
 A short reply can be a prospect if it describes the author's own work. Agreement, advice and a job title are not evidence.
 
@@ -185,7 +214,7 @@ python3 pudding.py --project DIR web '"Ada Example" Fig Labs linkedin'
           "linkedin": "https://www.linkedin.com/in/ada-example"}
 ```
 
-`verify` checks your answer the way it checks its own. A tie to the person is the same name, a name that fits the handle, their full name on the linked website, the same handle, or a LinkedIn profile that links the X account. A second tie is the company from the X bio on their LinkedIn profile, or their employer on the X profile or its website.
+`verify` checks your answer the way it checks its own. A tie to the person is the same name, a name that fits the handle, their full name on the linked website, the same handle, or a LinkedIn profile that links the X account. A name counts once however many places it appears. A second tie is the company from the X bio on their LinkedIn profile, or their employer on the X profile or its website.
 
 - Both ties: verified.
 - Only a tie to the person: kept, with a label saying you named them. Name someone on a name alone only when the name is uncommon and their LinkedIn profile fits what they post about. If the profile shows another field or no employer, leave them held.
@@ -237,7 +266,7 @@ An ad from LinkedIn shows the employer's size, industry and description, and the
 python3 pudding.py --project DIR contacts
 ```
 
-`contacts` finds who owns the work today for every `strong` and `look` ad, in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
+`contacts` finds who owns the work today for the twelve best `strong` and `look` ads (`--limit` raises that; the lookups are the dear part of a run), in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. If the search finds only colleagues or someone junior, it follows a colleague's profile to the employer's LinkedIn page and asks for the title holders there. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
 
 ## 5. Shortlist and review
 
@@ -248,7 +277,7 @@ python3 pudding.py --project DIR review
 
 `shortlist.md` leads with the people worth contacting. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person with a `fit` column and their employer's size and industry.
 
-`review` opens a page on this computer where the user says yes, no or maybe to each person. Answers save to `review.json` as they click. Tell the user the address it prints and leave it running.
+`review` opens a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. Tell the user the address it prints and leave it running.
 
 Report the number worth contacting, not the total verified. Give the funnel and the spend, and say plainly what was not covered.
 
@@ -259,7 +288,7 @@ python3 pudding.py --project DIR enrich
 python3 pudding.py --project DIR shortlist
 ```
 
-`enrich` looks up work email for the people the user said yes to, so run it after they have reviewed. It accepts one address at the employer's own domain and confirms the mailbox with a second provider. It costs about US$0.03 a person and stops at the spend cap. `enrich --all` covers everyone worth contacting; use it only if the user asks.
+`enrich` looks up work email for the people the user said yes to, so run it after they have reviewed. It accepts one address at the employer's own domain and confirms the mailbox with a second provider, so a company whose mail server accepts every address gets none. It costs about US$0.03 a person. If the run's cap is spent, it says so on each row: ask the user whether to raise it (`budget`), then run `enrich` again. `enrich --all` covers everyone worth contacting; use it only if the user asks.
 
 ## Limits
 

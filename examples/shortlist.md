@@ -27,4 +27,4 @@ Verified, with real evidence, but a weak match for this product.
 
 ## Held people (1)
 
-- [Wren](https://x.example/posts/wren): No LinkedIn identity: the X profile shows no full name.
+- [@wren](https://x.example/posts/wren): No LinkedIn identity: the X profile shows no full name.

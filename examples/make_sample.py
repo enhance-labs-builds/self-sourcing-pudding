@@ -19,10 +19,13 @@ QUOTED = '"spreadsheets" "our approvals"'
 
 
 def post(number, author, headline, text, channel="linkedin"):
-    host = "x.example" if channel == "x" else "linkedin.example"
-    return {"id": f"P{number:04d}", "channel": channel, "kind": "post", "author": author, "headline": headline, "text": text,
-            "url": f"https://{host}/posts/{author.split()[0].lower()}", "published_on": f"2026-11-0{number}",
-            "profile": f"https://profiles.example/{author.split()[0].lower()}", "found_by": [QUOTED]}
+    first = author.split()[0].lower()
+    row = {"id": f"P{number:04d}", "channel": channel, "kind": "post", "author": author, "headline": headline, "text": text,
+           "url": f"https://linkedin.example/posts/{first}", "published_on": f"2026-11-0{number}",
+           "profile": f"https://profiles.example/{first}", "found_by": [QUOTED]}
+    if channel == "x":  # An X post is signed with a handle; the display name rides along.
+        row.update(author="@" + author.replace(" ", "").lower(), name=author, url=f"https://x.example/posts/{first}")
+    return row
 
 
 POSTS = [

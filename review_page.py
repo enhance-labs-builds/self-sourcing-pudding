@@ -4,7 +4,9 @@ The page runs on this computer only. Each answer is saved to review.json in the 
 keyed by LinkedIn profile, so the next run can learn from it.
 """
 
+import contextlib
 from datetime import datetime, timezone
+import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 
@@ -162,6 +164,11 @@ def record(project, rows, payload):
     else:
         votes[profile] = {"vote": vote, "note": note.strip()[:1000], "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     t.atomic_json(project / "review.json", votes)
+    try:  # The CSV and the markdown shortlist carry the answer too, so they are rewritten with it.
+        with contextlib.redirect_stdout(io.StringIO()):
+            pudding.shortlist(project)
+    except (ValueError, OSError):
+        pass
     return votes
 
 

@@ -39,7 +39,58 @@ class LedgerTest(unittest.TestCase):
             headers = client.sent[0][3]
             self.assertEqual(headers["X-Treg-Route-Max-Cost"], "0.020000")
             self.assertTrue(headers["Idempotency-Key"].startswith("pudding-"))
-        self.assertEqual(oct((self.out / "treg-run.json").stat().st_mode & 0o777), "0o600")
+        for name in ("treg-run.json", ".lock", ".gitignore"):
+            self.assertEqual(oct((self.out / name).stat().st_mode & 0o777), "0o600")
+
+    def test_lookups_sent_together_share_the_cap_and_each_is_sent_once(self):
+        import threading, time
+        from concurrent.futures import ThreadPoolExecutor
+
+        class SlowClient:
+            def __init__(self):
+                self.sent, self.guard, self.limited = [], threading.Lock(), {"p9"}
+
+            def request(self, path, method, params, headers):
+                with self.guard:
+                    self.sent.append(params["url"])
+                time.sleep(0.02)  # Long enough for the others to be in flight too.
+                if params["url"] in self.limited:  # Refused once for free, then answered.
+                    self.limited.discard(params["url"])
+                    return 429, {"x-treg-error": "1"}, {"detail": "slow down"}
+                return reply(cost="3000")
+
+        client = SlowClient()
+        with self.ledger(budget=20_000) as (path, state):
+            lookups = t.Lookups(client, path, state)
+            ask = lambda url: lookups(t.PROFILE, {"url": url}, 4000, lambda data: "found")
+            with ThreadPoolExecutor(4) as pool:
+                same = list(pool.map(ask, ["p0"] * 4))
+                many = list(pool.map(ask, [f"p{n}" for n in range(1, 9)]))
+            # Four requests for one profile are one lookup. Eight more do not fit a cap of 20,000: the rest are never sent.
+            self.assertEqual((same, client.sent.count("p0")), (["found"] * 4, 1))
+            self.assertLessEqual(t.billing(state), 20_000)
+            self.assertEqual((many.count("found"), many.count(None), t.pending_calls(state)), (len(client.sent) - 1, 9 - len(client.sent), {}))
+            self.assertLess(len(client.sent), 9)
+        with self.ledger(budget=100_000) as (path, state):
+            lookups, client = t.Lookups(client, path, state), SlowClient()
+            lookups.client = client
+            real, t.sleep = t.sleep, lambda seconds: None
+            self.addCleanup(setattr, t, "sleep", real)
+            self.assertEqual(lookups(t.PROFILE, {"url": "p9"}, 4000, lambda data: "found"), "found")
+            self.assertEqual((client.sent, t.billing(state)), (["p9", "p9"], 3000))
+        # A lookup Treg turned away for an empty balance is not remembered as a miss: the next run sends it again.
+        broke = (402, {"x-treg-error": "1", "x-treg-call-id": "call_2"}, {"detail": "insufficient_balance"})
+        client = FakeClient(broke, reply(cost="3000"))
+        with self.ledger(budget=100_000) as (path, state):
+            self.assertIsNone(t.bounded_call(client, path, state, t.PROFILE, {"url": "p"}, 4000, lambda data: "found"))
+            self.assertEqual((t.billing(state), state["calls"][t.call_key(t.PROFILE, {"url": "p"})]["status"]), (0, "refused"))
+            self.assertEqual(t.bounded_call(client, path, state, t.PROFILE, {"url": "p"}, 4000, lambda data: "found"), "found")
+            self.assertEqual(t.billing(state), 3000)
+        # A charge this process did not start still stops everything.
+        with self.ledger(budget=100_000) as (path, state):
+            state["calls"]["stray"] = {"endpoint": t.PROFILE, "params": {}, "status": "pending", "reserved_micro": 15_000}
+            with self.assertRaises(t.PendingCall):
+                t.Lookups(client, path, state)(t.PROFILE, {"url": "p1"}, 4000, lambda data: "found")
 
     def test_a_call_that_does_not_fit_the_cap_is_never_sent(self):
         client = FakeClient()

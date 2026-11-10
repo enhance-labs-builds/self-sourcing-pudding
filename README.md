@@ -4,7 +4,7 @@
 
 <p align="center"><strong>Find the people already talking about the problem you solve.</strong></p>
 
-Give your coding agent your company URL and a sentence about who buys from you. It searches LinkedIn, X and job ads for people describing that problem in their own words, checks who they are and where they work now, and brings back a shortlist. You go through it and say yes or no to each person.
+Give your coding agent your company URL. It searches LinkedIn, X and job ads for people describing that problem in their own words, checks who they are and where they work now, and brings back a shortlist. You go through it and say yes or no to each person.
 
 Pudding is open source and runs on your own computer. Your agent does the reading and judging. Pudding does the lookups, keeps to the spend cap you set, and refuses any quote that isn't in the original post.
 
@@ -44,11 +44,11 @@ Pudding finds people who write in public, in English, about the work your produc
 
 ### Paste this
 
-Replace the two parts in angle brackets with your own details:
+Put your company URL in place of the part in angle brackets:
 
-> Clone https://github.com/enhance-labs-builds/self-sourcing-pudding (skip this if I already have it) and check I have Python 3.11 or later. Help me set up Treg. Then follow `docs/playbook.md` to find leads for `<my company URL>`. Our buyer is `<one sentence on who buys and why>`. Keep each run in its own dated folder under `~/pudding-runs` and stay under US$1. When the shortlist is ready, open the review page and tell me the funnel and the spend.
+> Clone https://github.com/enhance-labs-builds/self-sourcing-pudding (skip this if I already have it) and check I have Python 3.11 or later. Help me set up Treg. Then follow `docs/playbook.md` to find leads for `<my company URL>`. Keep each run in its own dated folder under `~/pudding-runs` and stay under US$1. When the shortlist is ready, open the review page and tell me the funnel and the spend.
 
-For example: "…find leads for `https://acme.example`. Our buyer is `the head of finance at a 50 to 500 person company who still approves purchases by email`." The buyer sentence matters more than anything else you type: your site says what you sell, but you know who buys it.
+If your site doesn't make it obvious who buys from you, add a sentence to the prompt, such as: "Our buyer is the head of finance at a 50 to 500 person company who still approves purchases by email." Otherwise your agent works out the buyer from your site.
 
 ### What happens next
 

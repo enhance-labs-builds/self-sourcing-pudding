@@ -4,7 +4,7 @@
 
 Give your coding agent your company URL. It searches LinkedIn, X and employer job ads for people describing that problem in their own words, checks who they are and where they work now, and hands you a shortlist. You say yes or no to each person.
 
-Pudding is open source and runs on your computer. Your agent supplies the judgment. Pudding does the lookups, holds the spend cap and refuses any quote that isn't in the source.
+Pudding is open source. Your agent supplies the judgment. Pudding does the lookups, holds the spend cap and refuses any quote that isn't in the source.
 
 ## What you get
 
@@ -13,34 +13,54 @@ Every row is a person, their current role, the sentence that earned them a place
 | Fit | Person | Current role | Evidence |
 | --- | --- | --- | --- |
 | strong | Nia Alder | Head of Procurement, Juniper Vale Software | “Purchase approvals kept getting stuck between Slack and a spreadsheet, so we piloted one request form with finance and IT last week.” |
-| look · hiring signal | Idris Vale | VP Finance, Hollis Bay Health | “You will choose and roll out our first purchase-approvals system” |
+| worth a look · hiring signal | Idris Vale | Head of Procurement, Hollis Bay Health | “You will choose and roll out our first purchase-approvals system” |
 
-These two are fictional. [See the full sample shortlist](examples/shortlist.md), or [the CSV](examples/shortlist.csv).
+These two are fictional, so no real person is named here. [See the full sample shortlist](examples/shortlist.md), or [the CSV](examples/shortlist.csv). The format is exactly what a real run writes.
 
 ## Run it
 
-You need Python 3.11 or later, a coding agent that can run commands, and a [Treg](https://treg.to) team for the paid lookups. New Treg accounts can start with US$1 in credit, which covers a first run. [Treg pricing](https://treg.to/pricing)
+Paste this into a coding agent that can run commands on your computer, such as Claude Code, Codex or Cursor:
 
-Clone the repository, then paste this into your agent:
+> Clone https://github.com/enhance-labs-builds/self-sourcing-pudding (skip this if I already have it) and check I have Python 3.11 or later. Help me connect a Treg team. Then follow `docs/playbook.md` to find leads for `<my company URL>`. Our buyer is `<one sentence on who buys and why>`. Keep the run in a private folder outside the repository and stay under US$1. When the shortlist is ready, open the review page and tell me the funnel and the spend.
 
-> In the Self-Sourcing Pudding checkout, follow `docs/playbook.md` to find leads for `<my company URL>`. Our buyer is `<one sentence on who buys and why>`. Keep the run in a private folder outside the repository and stay under US$1. When the shortlist is ready, open the review page and tell me the funnel and the spend.
+That is the whole setup. The agent fetches the project, asks you to approve the commands it runs, and comes back in 20 to 25 minutes with a page where you press **Y** for yes, **N** for no or **M** for maybe. Your answers save as you go.
 
 Add the buyer sentence if you can. Your site says what you sell; you know who buys it.
 
+## What it touches
+
+- **Your LinkedIn and X accounts: never.** Pudding does not sign in to either, and it sends nothing.
+- **Treg: every paid lookup.** [Treg](https://treg.to) is a hosted service that sells data lookups by the call. Pudding is an independent client of it. Behind Treg, LinkedIn data comes from HarvestAPI, X data from AnyAPI and the X API, search from Serper and Exa, and email from AnyAPI and Hunter.
+- **Your money: capped.** A run cannot spend more than the cap you set. Lookups cost under US$0.60 a run in our tests. Work email is a separate step at about US$0.03 a person. Treg advertises US$1 in starting credit for new accounts. [Treg pricing](https://treg.to/pricing)
+- **Your agent's usage: separate.** Our runs used roughly 280,000 to 390,000 tokens each, because the agent reads several hundred posts.
+- **Your computer: one private folder.** The run's files stay there, readable only by you. The names and profile links Pudding looks up go to Treg and its providers, and the posts are read by your agent's model.
+- **Other people's data.** Pudding reads public posts and finds work email. Whether and how you may contact someone depends on your own obligations, including the platforms' terms and privacy law where you and they are.
+
+### Connect Treg
+
+1. Create a Treg account and a team. Use a team with no connected provider keys or custom tools.
+2. Give your agent access: set `TREG_TOKEN` and `TREG_ORG` in the terminal it uses, or sign in with the Treg CLI. [Treg docs](https://treg.to/docs)
+
+Pudding reads those two values and sends the token only to `treg.to`.
+
+**Run your agent without other secrets in reach.** It reads hundreds of posts written by strangers. The playbook tells it to treat them as data, and a careful setup doesn't rely on that alone.
+
 ## What a run looks like
 
-1. **The agent writes a search plan.** It reads your site and writes 25 to 35 searches in your buyer's voice: a tool they already use, next to a first-person phrase such as "we switched".
-2. **It searches and reads.** LinkedIn and X posts come back onto a reading sheet. The agent grades each author and copies the exact sentence that shows their own work.
-3. **Pudding verifies each person.** It confirms the LinkedIn identity and current role. It ties an X account to LinkedIn only by a link on the profile or a matching name and company.
+1. **The agent writes a search plan.** It reads your site and writes 25 to 35 searches in your buyer's voice: a tool they already use, next to a phrase such as "we switched" or "our renewal".
+2. **It searches and reads.** LinkedIn and X posts come back onto a reading sheet, with people who sound about to change at the top. The agent grades each author and copies the exact sentence that shows their own work.
+3. **Pudding verifies each person.** It confirms the LinkedIn identity and current role. It ties an X account to LinkedIn only by a link on the profile, or a matching name plus company or handle.
 4. **It reads job ads.** An ad that assigns this work to a new hire points to the person who owns it today.
-5. **You review.** A page on your computer shows one person at a time. Press Y, N or M.
-6. **It finds work email** for the people you said yes to, and confirms each mailbox.
+5. **You review.** A page on your computer shows one person at a time.
+6. **It finds work email** for the people you said yes to, and confirms each mailbox with a second provider.
 
-Next time, start with `--previous`. Pudding skips everyone you have seen and shows the agent what you said yes and no to.
+The shortlist is `shortlist.csv` in the run folder. It has each person's name, role, company, location, LinkedIn link, quote and source, plus your answer and their email.
+
+Next time, start with `--previous`. Pudding leaves out everyone you have seen and shows the agent what you said yes and no to. Add `--suppress` with a list of LinkedIn links and company names to leave out people already in your pipeline.
 
 ## What to expect
 
-Three full runs on real companies, each read and graded by an agent following the playbook:
+Three full runs on real companies, each read and graded by Claude following the playbook:
 
 | Company | Buyer | Worth contacting |
 | --- | --- | --- |
@@ -48,24 +68,29 @@ Three full runs on real companies, each read and graded by an agent following th
 | AI customer-support agents | Heads of support and customer experience | 15 |
 | A review tool for coding agents | Technical founders and engineering leads | 25 |
 
-- Lookups cost under US$0.60 a run.
-- A run takes 20 to 25 minutes.
+- "Worth contacting" is the agent's grade. Your yes is the one that counts, which is why the review page exists.
 - LinkedIn search and job ads find most of the people. X helps for founders and developers.
-- Your agent's own usage is separate. A full run reads several hundred posts.
-- A search can finish with few people. Some buyers don't write about their work in public.
+- This is a short, hand-checked list for writing to people personally. It is not a volume source.
+
+## Where it works
+
+Pudding works when your buyers write about their work in public, in English, and name the tools they use. All three runs above were B2B software sold to people who post on LinkedIn.
+
+Expect less when your buyers rarely post, when your market isn't English-speaking, or when employers don't hire through the job boards Pudding reads: Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. A search can finish with few people.
 
 ## Why you can trust a row
 
 - **The quote is real.** Pudding rejects a grade unless the quote appears word for word in the captured post or ad.
-- **The role is current.** Each person is checked against LinkedIn on the day of the run, and the shortlist says how.
+- **The role is current.** Each person is checked against LinkedIn on the day of the run, and the shortlist says what the check rested on.
 - **Doubt is written down.** An agency, a solo founder, a role outside your buyer list: these are labels on the row, so you decide.
 - **Weak matches stand apart.** Low-fit people, existing customers and anyone who couldn't be identified each get their own section.
 - **Spend is capped.** Every paid lookup goes through one cap and leaves a receipt. A finished lookup is never charged twice.
-- **Names stay on your computer.** The run lives in a private folder that only you can read.
+
+The reason on each row is the agent's own sentence. Read the quote and follow the link before you write to anyone.
 
 ## Commands
 
-Your agent runs these. You can too.
+Your agent runs these for you. [The playbook](docs/playbook.md) is its manual; you don't need to read it.
 
 ```sh
 python3 pudding.py --project ~/pudding-runs/acme start https://acme.example --budget-usd 1.00
@@ -73,7 +98,7 @@ python3 pudding.py --project ~/pudding-runs/acme start https://acme.example --bu
 
 | Command | What it does |
 | --- | --- |
-| `start URL` | Reads the site and creates the run folder. `--previous DIR` carries over an earlier run. |
+| `start URL` | Reads the site and creates the run folder. `--previous DIR` carries over an earlier run. `--suppress FILE` leaves people and companies out. |
 | `check` | Validates the plan and the grades. |
 | `search` | Runs the LinkedIn and X searches. |
 | `sheet` | Writes the next reading sheet. `--jobs` for job ads. |
@@ -83,16 +108,15 @@ python3 pudding.py --project ~/pudding-runs/acme start https://acme.example --bu
 | `jobs`, `contacts` | Finds job ads, then the person who owns the work. |
 | `shortlist` | Writes `shortlist.md` and `shortlist.csv`. |
 | `review` | Opens the yes/no page on your computer. |
-| `enrich` | Finds and verifies work email. |
+| `enrich` | Finds and verifies work email for your yes answers. |
 | `status` | Shows the funnel and the spend. |
-
-[Read the playbook](docs/playbook.md) for how the agent uses them.
 
 ## Limits
 
 - Pudding finds and verifies people. It sends nothing.
-- Quote posts on X need a metered read-only X connection on your Treg team.
-- Check contact history and suppression in your own CRM before you reach out. `profile_url` in the CSV is the key to match on.
+- The 45-day window is the default. Change it with `start --window-days`.
+- Quote posts on X are off by default. `spider --quote-pages 2` reads them if your Treg team has a read-only X connection.
+- Check contact history in your own CRM before you reach out. `profile_url` and `company_domain` in the CSV are the keys to match on.
 
 ## Develop
 
@@ -100,4 +124,4 @@ python3 pudding.py --project ~/pudding-runs/acme start https://acme.example --bu
 python3 -m unittest discover -s tests
 ```
 
-Standard library only. MIT licence.
+Standard library only. MIT licence. Built by [Enhance Labs](https://enhancelabs.ai).

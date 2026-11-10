@@ -67,7 +67,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 class Treg:
     def __init__(self, token, org):
-        self.headers = {"X-Treg-Token": token, "X-Treg-Org": org, "X-Treg-Client": "sourcing-rig"}
+        self.headers = {"X-Treg-Token": token, "X-Treg-Org": org, "X-Treg-Client": "self-sourcing-pudding"}
         self.opener = build_opener(NoRedirect)
 
     def request(self, path, method="GET", params=None, headers=None, *, public=False):
@@ -251,7 +251,7 @@ def prepare_call(path, state, endpoint, params, quote, *, reserve=0):
             raise PendingCall(f"Treg cannot safely replay {endpoint}{reference}. Check Treg Activity; the reservation is still held.")
     else:
         call = {"endpoint": endpoint, "params": params, "status": "pending", "reserved_micro": ceiling,
-                "started_at": time(), "idempotency_key": f"sourcing-rig-{state['id']}-{key[:24]}"}
+                "started_at": time(), "idempotency_key": f"pudding-{state['id']}-{key[:24]}"}
         calls[key] = call
         atomic_json(path, state)
     return call, recovering

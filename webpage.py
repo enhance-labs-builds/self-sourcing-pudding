@@ -9,6 +9,9 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 
+USER_AGENT = "SelfSourcingPudding/0.3 (+https://github.com/enhance-labs-builds/self-sourcing-pudding)"
+
+
 def terminal_text(value):
     return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", " ", value)
 
@@ -49,7 +52,7 @@ def fetch_page(url):
         conn = PublicConnection(parsed.hostname, timeout=5)
         try:
             target = urlunsplit(("", "", parsed.path, parsed.query, ""))
-            conn.request("GET", target, headers={"Accept": "text/html", "User-Agent": "SourcingRig/1.0"})
+            conn.request("GET", target, headers={"Accept": "text/html", "User-Agent": USER_AGENT})
             with conn.getresponse() as response:
                 redirect = response.getheader("Location")
                 if 300 <= response.status < 400 and redirect:

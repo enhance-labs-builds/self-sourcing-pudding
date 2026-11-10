@@ -38,7 +38,7 @@ class LedgerTest(unittest.TestCase):
             self.assertEqual((first, again, len(client.sent), t.billing(state)), ([], [], 1, 2000))
             headers = client.sent[0][3]
             self.assertEqual(headers["X-Treg-Route-Max-Cost"], "0.020000")
-            self.assertTrue(headers["Idempotency-Key"].startswith("sourcing-rig-"))
+            self.assertTrue(headers["Idempotency-Key"].startswith("pudding-"))
         self.assertEqual(oct((self.out / "treg-run.json").stat().st_mode & 0o777), "0o600")
 
     def test_a_call_that_does_not_fit_the_cap_is_never_sent(self):

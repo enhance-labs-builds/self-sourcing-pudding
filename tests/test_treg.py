@@ -112,6 +112,33 @@ class ParsingTest(unittest.TestCase):
             {"id": "nope", "authorUsername": "ada", "text": "skipped"}]}}})
         self.assertEqual([(post["author"], post["url"], post["kind"]) for post in x], [("@ada", "https://x.com/ada/status/42", "post")])
         self.assertEqual(t.x_posts({"output": {"found": False}}), [])
+        page = t.x_page({"output": {"data": {"nextCursor": "c2", "items": [
+            {"id": 43, "authorUsername": "ada", "authorName": "Ada  Example", "authorFollowers": 2521, "text": "We left Tool1."}]}}})
+        self.assertEqual((page["next"], page["posts"][0]["name"], page["posts"][0]["headline"]), ("c2", "Ada Example", "Ada Example · 2,521 followers"))
+        self.assertEqual(t.x_page({"output": {"found": False}}), {"posts": [], "next": None})
+
+    def test_linkedin_job_ads_and_people_are_read_with_the_employer_attached(self):
+        found = t.linkedin_jobs({"elements": [
+            {"id": "42", "title": "RevOps Lead", "postedDate": "2026-11-01T09:00:00.000Z", "company": {"name": "Fig"}},
+            {"id": "nope", "title": "Skipped", "company": {"name": "Fig"}}, {"id": "43", "title": "No company"}]})
+        self.assertEqual(found, [{"id": "42", "url": "https://www.linkedin.com/jobs/view/42", "title": "RevOps Lead",
+                                  "company": "Fig", "published_on": "2026-11-01"}])
+        ad = {"element": {"jobState": "LISTED", "title": "RevOps Lead", "postedDate": "2026-11-01T09:00:00.000Z",
+                          "descriptionText": "You will own our CRM.",
+                          "hiringTeam": [{"linkedinUrl": "https://in.linkedin.com/in/ada", "name": "Ada Example"},
+                                         {"linkedinUrl": "https://example.com/in/x", "name": "Not LinkedIn"}],
+                          "company": {"name": "Fig", "linkedinUrl": "https://www.linkedin.com/company/fig/life", "employeeCount": 14,
+                                      "industries": [{"name": "Software Development"}], "description": "Invoices for\nsmall teams."}}}
+        job = t.linkedin_job(ad)
+        self.assertEqual((job["company_url"], job["hiring_team"], job["published_on"]),
+                         ("https://www.linkedin.com/company/fig", [{"profile": "https://www.linkedin.com/in/ada", "name": "Ada Example"}], "2026-11-01"))
+        self.assertEqual(job["employer"], {"name": "Fig", "url": None, "employees": 14, "industry": "Software Development",
+                                           "about": "Invoices for small teams."})
+        self.assertIsNone(t.linkedin_job({"element": {**ad["element"], "jobState": "CLOSED"}}))
+        people = t.linkedin_people({"elements": [
+            {"linkedinUrl": "https://www.linkedin.com/in/ada", "name": "Ada Example", "position": "Co-founder  Fig"},
+            {"linkedinUrl": "https://www.linkedin.com/company/fig", "name": "Not a person"}]})
+        self.assertEqual(people, [{"profile": "https://www.linkedin.com/in/ada", "name": "Ada Example", "text": "Co-founder Fig"}])
 
 
 if __name__ == "__main__":

@@ -23,6 +23,9 @@ X_QUOTES = "x.x.get-posts-quoted-posts"
 X_PROFILE = "anyapi.x.user.profile"
 PROFILE = "harvestapi.linkedin.user.profile"
 COMPANY = "harvestapi.linkedin.company.profile"
+JOB_SEARCH = "harvestapi.linkedin.search.jobs"
+JOB = "harvestapi.linkedin.job.get"
+PEOPLE = "harvestapi.linkedin.profile.search"
 SEMANTIC_PEOPLE = "exa.people.search"
 BUYER_WEB = "serper.web.search"
 WORK_EMAIL = "anyapi.linkedin.email.work.find"
@@ -30,11 +33,11 @@ VERIFY_EMAIL = "hunter.people.email.verify"
 EMAIL_ENDPOINTS = (COMPANY, WORK_EMAIL, VERIFY_EMAIL)
 METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WORK_EMAIL: "POST", VERIFY_EMAIL: "GET",
            LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST", X_QUOTES: "GET", X_PROFILE: "POST", SEMANTIC_PEOPLE: "POST",
-           BUYER_WEB: "POST"}
+           BUYER_WEB: "POST", JOB_SEARCH: "GET", JOB: "GET", PEOPLE: "GET"}
 # The most a single call may cost, in millionths of a US dollar.
 PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000,
             LINKEDIN_COMMENTS: 5_000, X_REPLIES: 14_000, X_QUOTES: 50_000, X_PROFILE: 2_000, SEMANTIC_PEOPLE: 7_000,
-            BUYER_WEB: 1_000}
+            BUYER_WEB: 1_000, JOB_SEARCH: 2_000, JOB: 2_000, PEOPLE: 5_000}
 X_QUOTE_PAGE = 10
 
 
@@ -424,6 +427,57 @@ def x_quotes(data, seed_id):
             "url": f"https://x.com/i/web/status/{post_id}", "text": row["text"],
             "published_on": stamp[:10] if stamp else None, "profile": None, "headline": "",
         })
+    return output
+
+
+def linkedin_jobs(data):
+    """A page of LinkedIn's job search: enough to decide which ads to open."""
+    output = []
+    for row in data.get("elements") or []:
+        company = row.get("company") if isinstance(row.get("company"), dict) else {}
+        job_id = str(row.get("id") or "")
+        if job_id.isdigit() and row.get("title") and company.get("name"):
+            output.append({"id": job_id, "url": f"https://www.linkedin.com/jobs/view/{job_id}", "title": row["title"],
+                           "company": company["name"], "published_on": str(row.get("postedDate") or "")[:10] or None})
+    return output
+
+
+def linkedin_job(data):
+    """One LinkedIn job ad in full, with what LinkedIn says about the employer and who is hiring."""
+    row = data.get("element") or {}
+    company = row.get("company") if isinstance(row.get("company"), dict) else {}
+    if row.get("jobState") != "LISTED" or not row.get("title") or not company.get("name"):
+        return None
+    count = company.get("employeeCount")
+    industries = [item.get("name") for item in company.get("industries") or [] if isinstance(item, dict) and item.get("name")]
+    team = []
+    for person in row.get("hiringTeam") or []:
+        try:
+            profile = linkedin_profile(re.sub(r"://[a-z]{2,3}\.linkedin", "://www.linkedin", str(person.get("linkedinUrl") or "")))
+        except ValueError:
+            profile = None
+        if profile:
+            team.append({"profile": profile, "name": " ".join(str(person.get("name") or "").split())[:80]})
+    page = re.match(r"https://www\.linkedin\.com/company/[\w%.-]+", str(company.get("linkedinUrl") or ""))
+    page = linkedin_url(page.group(0), "company") if page else None
+    return {"title": row["title"], "company": company["name"], "company_url": page, "text": row.get("descriptionText") or "",
+            "published_on": str(row.get("postedDate") or "")[:10] or None, "hiring_team": team[:3],
+            "employer": {"name": company["name"], "url": None, "employees": count if isinstance(count, int) else None,
+                         "industry": industries[0] if industries else "",
+                         "about": " ".join(str(company.get("description") or "").split())[:220]}}
+
+
+def linkedin_people(data):
+    """A page of LinkedIn's people search: each profile with the line it shows under the name."""
+    output = []
+    for row in data.get("elements") or []:
+        try:
+            profile = linkedin_profile(str(row.get("linkedinUrl") or ""))
+        except ValueError:
+            profile = None
+        if profile:
+            output.append({"profile": profile, "name": " ".join(str(row.get("name") or "").split())[:80],
+                           "text": " ".join(str(row.get("position") or "").split())[:200]})
     return output
 
 

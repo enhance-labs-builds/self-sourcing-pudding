@@ -18,7 +18,7 @@ PLAN = {
     "exclude_employers": ["Orbit CRM Inc"], "customers": ["Plum Labs"], "employer_topic": "CRM",
     "owner_titles": ["Head of Revenue Operations"], "seller_terms": ["CRM consultancy", "CRM implementation"],
     "linkedin_queries": [f'"Tool{n}" "we switched"' for n in range(19)] + ['"Tool1" "our renewal"'],
-    "x_queries": [f'"Tool{n}" ("we switched" OR "our team")' for n in range(12)], "job_queries": ["revops crm"],
+    "x_queries": [f'"Tool{n}" ("we switched" OR "our team")' for n in range(12)], "job_queries": ['"CRM migration" revops'],
 }
 POST = {"channel": "linkedin", "kind": "post", "author": "Ada Example", "headline": "Founder at Fig",
         "url": "https://www.linkedin.com/posts/ada_activity-7000000000000000001-abcd",
@@ -427,6 +427,11 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(pudding.owner_match("Chief Revenue Officer", ["Chief Technology Officer"]),
                          "company leader, not the named owner")
         self.assertIsNone(pudding.owner_match("Chief of Staff", ["CTO", "Head of Engineering"]))
+        self.assertIsNone(pudding.owner_match("Vice President, Global Solutions Engineering", ["CTO", "VP Engineering"]))
+        self.assertEqual(pudding.owner_match("Vice President Engineering", ["CTO", "VP Engineering"]), "named owner title")
+        # Two co-founders both hold a named title: the one whose title the agent listed first is the owner.
+        titles = ["CTO", "Co-founder"]
+        self.assertLess(pudding.owner_order("Co-Founder & CTO", titles), pudding.owner_order("Co-Founder & CRO", titles))
         self.assertTrue(pudding.same_employer("LIQID", "LIQID Investments GmbH"))
         self.assertEqual(pudding.owner_match("RevOps Manager", ["Head of Revenue Operations"]), "named owner title")
         self.assertFalse(pudding.same_employer("Fig", "Figma"))
@@ -458,6 +463,88 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual((people["J001"]["profile_url"], people["J001"]["identity_basis"]),
                          ("https://www.linkedin.com/in/head", "named owner title"))
         self.assertEqual([pudding.seniority(r) for r in ("VP, Sales", "Senior Director, CX", "Support Team Lead", "Analyst")], [0, 1, 2, 3])
+        # LinkedIn's own list of people at the employer comes first, and a fitting title there ends the search.
+        self.write("people.json", {})
+        asked = []
+
+        def linkedin(endpoint, params, transform):
+            asked.append((endpoint, params.get("title"), params.get("keywordsCompany") or params.get("currentCompany")))
+            if endpoint == t.PEOPLE:
+                return transform({"elements": [
+                    {"linkedinUrl": "https://www.linkedin.com/in/junior", "name": "Bo", "position": "Revenue Operations Manager at Fig"},
+                    {"linkedinUrl": "https://www.linkedin.com/in/head", "name": "Ada", "position": "VP Revenue Operations | Fig"}]})
+            if endpoint != t.PROFILE:
+                raise AssertionError("LinkedIn already named a fitting colleague.")
+            return transform(profile([{"position": "VP Revenue Operations", "companyName": "Fig"}], url=params["url"]))
+
+        jobs = json.loads((self.project / "jobs.json").read_text())
+        jobs["J001"]["company_url"] = "https://www.linkedin.com/company/fig"
+        self.write("jobs.json", jobs)
+        pudding.job_contacts(self.project, linkedin, 4)
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertEqual(asked[0], (t.PEOPLE, "Head of Revenue Operations", "https://www.linkedin.com/company/fig"))
+        self.assertEqual((people["J001"]["profile_url"], people["J001"]["identity_basis"]),
+                         ("https://www.linkedin.com/in/head", "named owner title"))
+
+    def test_job_ads_come_from_linkedin_with_the_employer_and_one_ad_each(self):
+        page = "https://www.linkedin.com/company/fig"
+        ad = lambda title, company, state="LISTED": {"element": {
+            "jobState": state, "title": title, "postedDate": "2026-11-01T00:00:00.000Z",
+            "descriptionText": "You will own our CRM migration and RevOps tooling. " * 6,
+            "hiringTeam": [{"linkedinUrl": "https://uk.linkedin.com/in/ada", "name": "Ada Example"}],
+            "company": {"name": company, "linkedinUrl": page + "/life", "employeeCount": 14,
+                        "industries": [{"name": "Software Development"}], "description": "Invoices for\nsmall teams."}}}
+        found = [{"id": str(n), "title": title, "postedDate": "2026-11-01T00:00:00.000Z", "company": {"name": company}}
+                 for n, (title, company) in enumerate([("RevOps Lead", "Fig"), ("RevOps Analyst", "Fig, Inc."), ("CRM Lead", "Orbit CRM Inc"),
+                                                       ("Sales Ops", "Pear"), ("Old Role", "Plum")], 1)]
+        opened = []
+
+        def call(endpoint, params, transform):
+            if endpoint == t.JOB_SEARCH:
+                return transform({"elements": found if params["page"] == 1 else []})
+            if endpoint == t.JOB:
+                opened.append(params["jobId"])
+                title, company = found[int(params["jobId"]) - 1]["title"], found[int(params["jobId"]) - 1]["company"]["name"]
+                return transform(ad(title, company, "CLOSED" if company == "Plum" else "LISTED"))
+            return transform({"organic": []})
+
+        self.write("plan.json", {**PLAN, "job_queries": ['"CRM migration"']})
+        pudding.jobs_search(self.project, call, 12, 90)
+        jobs = json.loads((self.project / "jobs.json").read_text())
+        # One ad per employer, none from an excluded employer, and a closed ad is dropped.
+        self.assertEqual([(job["company"], job["title"]) for job in jobs.values()], [("Fig", "RevOps Lead"), ("Pear", "Sales Ops")])
+        self.assertEqual(opened, ["1", "4", "5"])
+        first = jobs["J001"]
+        self.assertEqual((first["url"], first["company_url"], first["hiring_team"]),
+                         ("https://www.linkedin.com/jobs/view/1", page, [{"profile": "https://www.linkedin.com/in/ada", "name": "Ada Example"}]))
+        sheet = (self.project / "jobs-sheet.md").read_text()
+        self.assertIn("Employer: 14 people on LinkedIn · Software Development · Invoices for small teams.", sheet)
+        self.assertIn("Hiring team named on the ad: Ada Example", sheet)
+        # The person named on the ad is checked first, and the employer record comes from the ad at no extra cost.
+        self.write("job-grades.json", {"J001": {"verdict": "mandate", "fit": "strong", "quote": "You will own our CRM migration",
+                                                "why": "Assigns the migration.", "owner_titles": ["Head of Revenue Operations"]}})
+
+        def owner(endpoint, params, transform):
+            if endpoint == t.PEOPLE:
+                return transform({"elements": []})
+            if endpoint == t.PROFILE:
+                return transform(profile([{"position": "Head of Revenue Operations", "companyName": "Fig"}], url=params["url"]))
+            return transform({"organic": [], "results": []})
+
+        pudding.job_contacts(self.project, owner, 4)
+        entry = json.loads((self.project / "people.json").read_text())["J001"]
+        self.assertEqual(entry["identity_basis"], "named owner title; named on the ad as the hiring contact")
+        self.assertEqual(entry["employer"]["employees"], 14)
+        # A low-fit ad is not worth the lookups, and LinkedIn is searched on the query's first phrase only.
+        self.write("people.json", {})
+        grades = json.loads((self.project / "job-grades.json").read_text())
+        self.write("job-grades.json", {"J001": {**grades["J001"], "fit": "low"}})
+        pudding.job_contacts(self.project, lambda *_: self.fail("A low-fit ad was looked up."), 4)
+        self.assertEqual(json.loads((self.project / "people.json").read_text()), {})
+        searched = []
+        self.write("plan.json", {**PLAN, "job_queries": ['"CRM migration" revops', '"CRM migration" "HubSpot admin"', '"RevOps tooling"']})
+        pudding.jobs_search(self.project, lambda endpoint, params, transform: searched.append(params.get("search")) or [], 12, 20)
+        self.assertEqual([phrase for phrase in searched if phrase], ['"CRM migration"', '"RevOps tooling"'])
         self.assertEqual(pudding.brand("Wiz, Inc."), "Wiz")
         self.write("job-grades.json", {"J001": "customer"})
         self.assertEqual(pudding.check_job_grades(self.project)[1]["J001"]["verdict"], "customer")
@@ -684,6 +771,7 @@ class AgentRunTest(unittest.TestCase):
         counts = pudding.funnel(self.project)
         self.assertEqual((counts["Job ads found"], counts["Job ads graded"]), (1, 0))
         self.assertIn("fields Pudding does not read: notes", " ".join(pudding.plan_notes({**PLAN, "notes": "x"})))
+        self.assertIn("1 job queries are strings of keywords", " ".join(pudding.plan_notes({**PLAN, "job_queries": ["head of revops crm hubspot admin"]})))
 
     def test_verify_records_the_employer_and_work_email_reuses_it(self):
         posts = {}

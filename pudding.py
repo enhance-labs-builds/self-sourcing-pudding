@@ -150,7 +150,7 @@ def ledger(project):
     token, org = credentials()
     client = t.Treg(token, org)
     wanted = (t.LINKEDIN, t.X, t.PROFILE, t.LINKEDIN_COMMENTS, t.X_REPLIES, t.X_PROFILE, t.BUYER_WEB, t.SEMANTIC_PEOPLE,
-              *t.EMAIL_ENDPOINTS)
+              t.JOB_SEARCH, t.JOB, t.PEOPLE, *t.EMAIL_ENDPOINTS)
     quotes = client.preflight({t.LINKEDIN, t.X, t.PROFILE}, include_x_quotes=True)
     for endpoint in wanted[3:]:
         try:
@@ -366,6 +366,10 @@ def plan_notes(plan, searched=False):
     if not plan.get("seller_terms"):
         notes.append("seller_terms is empty. Add the phrases a company selling in this category uses about itself, "
                      "so sellers sink on the reading sheet and are flagged when verified.")
+    wordy = [q for q in plan["job_queries"] if '"' not in q or len(re.sub(r'"[^"]*"', "", q).split()) > 3]
+    if wordy:
+        notes.append(f"{len(wordy)} job queries are strings of keywords. A short quoted phrase an ad would contain finds more: "
+                     + "; ".join(wordy[:2]))
     if plan["job_queries"] and not plan["owner_titles"]:
         notes.append("Add owner_titles so job ads can be tied to a current owner.")
     if len(plan["x_queries"]) < 12:
@@ -1007,16 +1011,49 @@ def jobs_search(project, call, per_query, lookback):
         raise ValueError("plan.json has no job_queries.")
     jobs = read(project / "jobs.json", {})
     seen = {job["url"] for job in jobs.values()}
+    employers = {job_board.company_key(job["company"]) for job in jobs.values()}  # One ad says what an employer is doing.
     after = (date.fromisoformat(read(project / "project.json")["created"]) - timedelta(days=lookback)).isoformat()
     sites = "(" + " OR ".join(f"site:{board}" for board in job_board.BUYER_BOARDS) + ")"
+
+    def keep(url, company, title, posted, text, query, **more):
+        if (posted and posted[:10] < after or listed(company, plan["exclude_employers"]) or len(text) < 200
+                or job_board.company_key(company) in employers):
+            return False
+        employers.add(job_board.company_key(company))
+        job_id = f"J{len(jobs) + 1:03d}"
+        jobs[job_id] = {"id": job_id, "url": url, "company": company, "title": title,
+                        "published_on": posted[:10] if posted else None, "text": text, "found_by": [query], **more}
+        return True
+
+    phrases = set()
     for query in plan["job_queries"]:
-        hits = []
+        hits, kept = [], 0
+        # LinkedIn's job search reads the whole ad but matches one phrase at a time, so it gets the query's first.
+        phrase = next(iter(re.findall(r'"[^"]+"', query)), query)
+        for page in (1, 2) if phrase not in phrases else ():
+            found = call(t.JOB_SEARCH, {"search": phrase, "sortBy": "relevance", "page": page,
+                                        **({"postedLimit": "month"} if lookback <= 31 else {})}, t.linkedin_jobs) or []
+            hits += found
+            if len(found) < 25:
+                break
+        for hit in hits:
+            if (hit["url"] in seen or kept >= per_query or (hit["published_on"] or after) < after
+                    or job_board.company_key(hit["company"]) in employers or listed(hit["company"], plan["exclude_employers"])):
+                continue
+            seen.add(hit["url"])
+            ad = call(t.JOB, {"jobId": hit["id"]}, t.linkedin_job)
+            if ad:
+                kept += keep(hit["url"], ad["company"], ad["title"], ad["published_on"], ad["text"], query,
+                             company_url=ad["company_url"], employer=ad["employer"], hiring_team=ad["hiring_team"])
+        if phrase not in phrases:
+            print(terminal_text(f"jobs linkedin {len(hits):3d} results, {kept:2d} ads kept | {phrase}"), flush=True)
+        phrases.add(phrase)
+        hits, kept = [], 0
         for page in (1, 2):
             found = call(t.BUYER_WEB, {"q": f"{query} {sites} after:{after}", "num": 10, "page": page}, web_results) or []
             hits += found
             if len(found) < 10:
                 break
-        kept = 0
         for hit in hits:
             url = job_board.posting_url(hit.get("link") or "")
             if not url or url in seen or kept >= per_query:
@@ -1028,28 +1065,29 @@ def jobs_search(project, call, per_query, lookback):
                 text = "\n".join(job_board.PostingHTML(unescape(html)).text_lines())  # Greenhouse escapes its HTML.
             except Exception:  # A closed or unreadable ad is common and costs nothing.
                 continue
-            if posted and posted[:10] < after or listed(company, plan["exclude_employers"]) or len(text) < 200:
-                continue
-            job_id = f"J{len(jobs) + 1:03d}"
-            jobs[job_id] = {"id": job_id, "url": url, "company": company, "title": title,
-                            "published_on": posted[:10] if posted else None, "text": text, "found_by": [query]}
-            kept += 1
-        print(terminal_text(f"jobs {len(hits):3d} results, {kept:2d} readable ads | {query}"), flush=True)
+            kept += keep(url, company, title, posted, text, query)
+        print(terminal_text(f"jobs boards   {len(hits):3d} results, {kept:2d} ads kept | {query}"), flush=True)
     t.atomic_json(project / "jobs.json", jobs)
-    print(f"{len(jobs)} ads captured.")
-    jobs_sheet(project, 15)
+    linkedin = sum("linkedin.com/jobs/" in job["url"] for job in jobs.values())
+    print(f"{len(jobs)} ads captured, one per employer: {linkedin} from LinkedIn, {len(jobs) - linkedin} from job boards.")
+    jobs_sheet(project, 20)
 
 
 def jobs_sheet(project, limit):
     plan, jobs, graded = load_plan(project), read(project / "jobs.json", {}), read(project / "job-grades.json", {})
-    rows = [job for job in jobs.values() if job["id"] not in graded and not listed(job["company"], plan["exclude_employers"])]
-    terms = topic_terms(plan)
+    terms = topic_terms(plan) + [phrase for query in plan["job_queries"] for phrase in re.findall(r'"([^"]+)"', query)]
+    said = lambda job: sum(term.casefold() in job["text"].casefold() for term in dict.fromkeys(terms))
+    rows = sorted((job for job in jobs.values() if job["id"] not in graded and not listed(job["company"], plan["exclude_employers"])),
+                  key=lambda job: -said(job))  # The ads that say most about the plan's topics are read first.
     lines = [f"# Job ads — {min(limit, len(rows))} of {len(rows)} ungraded", "",
-             "Grade each in job-grades.json. Use `show ID` for the full ad.", "", DATA_NOTE, ""]
+             "Grade each in job-grades.json. Use `show ID` for the full ad. An ad from LinkedIn carries the employer's "
+             "size and description: a staffing firm hiring for a client is `no`.", "", DATA_NOTE, ""]
     for job in rows[:limit]:
         known = " · NAMED CUSTOMER" if listed(job["company"], plan["customers"]) else ""
+        team = ", ".join(person["name"] for person in job.get("hiring_team") or [])
         lines += [f"## {job['id']} · {job['company']}{known} · {job['title']} · {job['published_on'] or 'no date'}",
-                  job["url"], "", excerpt(job["text"], terms, 1100), ""]
+                  job["url"], *([f"Employer: {employer_line(job['employer'])}"] if employer_line(job.get("employer")) else []),
+                  *([f"Hiring team named on the ad: {team}"] if team else []), "", excerpt(job["text"], terms, 1100), ""]
     save(project / "jobs-sheet.md", terminal_text("\n".join(lines)) + "\n")
     print(f"Wrote {min(limit, len(rows))} ads to {project / 'jobs-sheet.md'}; {max(0, len(rows) - limit)} more ungraded ads remain.")
 
@@ -1095,6 +1133,7 @@ def leaders(title):
     """The company-leader words in a title: "CEO/Co-Founder" holds both ceo and founder."""
     words = {word.replace("-", "") for word in re.findall(r"[\w-]+", title.casefold())}
     found = {"founder" if word == "cofounder" else word for word in words & (OWNERS - {"chief"})}
+    found -= {"president"} if "vice" in words or "vp" in words else set()  # A vice president runs a function, not the company.
     return found | ({"ceo"} if {"chief", "executive"} <= words else set())
 
 
@@ -1139,6 +1178,13 @@ def indexed_people(data, company):
 OWNER_RANK = {"named owner title": 0, "same function as the named owner": 1, "company leader, not the named owner": 2}
 
 
+def owner_order(role, titles):
+    """Rank a role for an ad: how it matches, how senior it is, then how early in the agent's list its title comes."""
+    match = owner_match(role, titles)
+    first = next((at for at, title in enumerate(titles) if owner_match(role, [title]) == "named owner title"), len(titles))
+    return (OWNER_RANK[match], seniority(role), first) if match else None
+
+
 def seniority(role):
     """0 for executives and heads, 1 for directors, 2 for managers and leads, 3 for everyone else."""
     words = set(re.findall(r"[a-z]+", role.casefold()))
@@ -1148,17 +1194,27 @@ def seniority(role):
 
 
 def owner_candidates(call, job, titles, why):
-    """Find likely owners from an indexed people search and a web search of LinkedIn, most senior match first."""
+    """Find likely owners: the ad's hiring team, LinkedIn's people at the employer, then the web. Most senior match first."""
     name = brand(job["company"])
     mention = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)", re.I)
     ranked = {}
 
     def consider(profile, role_text, unknown):
-        match = owner_match(role_text, titles)
-        order = (OWNER_RANK[match], seniority(role_text)) if match else unknown
+        order = owner_order(role_text, titles) or unknown
         if order and (profile not in ranked or order < ranked[profile]):
             ranked[profile] = order
 
+    for person in job.get("hiring_team") or []:  # Named on the ad: the profile check decides whether they own the work.
+        ranked[person["profile"]] = (2, 2)
+    page = job.get("company_url")
+    if page:  # LinkedIn's own list of who works there now. Only an ad from LinkedIn carries the page; a name search finds namesakes.
+        small = ((job.get("employer") or {}).get("employees") or 99) <= 15
+        for title in [None] if small else list(dict.fromkeys(titles))[:3]:
+            params = {"currentCompany": page, **({"title": title} if title else {}), "page": 1}
+            for person in call(t.PEOPLE, params, t.linkedin_people) or []:
+                consider(person["profile"], person["text"], (3, 3))  # What they do is in the line under their name.
+        if any(order[:2] <= (0, min(seniority(title) for title in titles)) for order in ranked.values()):
+            return sorted(ranked, key=ranked.get)  # A named title at the level asked: search no further.
     people = call(t.SEMANTIC_PEOPLE, {
         "query": f"Current {', '.join(titles[:4])} at {name}. {why}"[:400], "category": "people", "numResults": 10,
         "includeDomains": ["linkedin.com"]}, lambda data: indexed_people(data, job["company"])) or []
@@ -1180,8 +1236,10 @@ def job_contacts(project, call, per_job):
     people = read(project / "people.json", {})
     skip = read(project / "suppress.json", {})
     seen_before = set(read(project / "previous.json", {})) | set(skip.get("profiles", []))
+    skipped = 0
     for key, grade in grades.items():
-        if grade["verdict"] != "mandate":
+        if grade["verdict"] != "mandate" or grade["fit"] == "low" and not (people.get(key) or {}).get("verified"):
+            skipped += grade["verdict"] == "mandate"  # A weak match is not worth the lookups that find its owner.
             people.pop(key, None)
             continue
         job, titles = jobs[key], grade["owner_titles"]
@@ -1201,18 +1259,19 @@ def job_contacts(project, call, per_job):
             person = person or current_role(call(t.PROFILE, {"url": profile}, slim_profile), profile)
             if not person or not same_employer(person["company"], job["company"]):
                 continue
-            match = owner_match(person["role"], titles)
-            order = (OWNER_RANK[match], seniority(person["role"])) if match else None
+            match, order = owner_match(person["role"], titles), owner_order(person["role"], titles)
             if order and (best is None or order < best[3]):
                 best = (profile, person, match, order)
-            if best and best[3] <= (0, min(seniority(title) for title in titles)):
-                break  # Holds a named title at the level asked for. Further lookups would only cost money.
+            if best and best[3] <= (0, min(seniority(title) for title in titles), 0):
+                break  # Holds the first title named, at the level asked for. Further lookups would only cost money.
         if suppressed(job["company"], skip):
             best, entry["hold"] = None, f"On your suppression list ({job['company']})."
         if best:
             junior = best[3][1] > min(seniority(title) for title in titles)
-            entry.update(verified=best[1], profile_url=best[0], hold=None, employer=employer(call, best[1]),
-                         identity_basis=best[2] + ("; more junior than the titles named" if junior else ""))
+            on_ad = any(person["profile"] == best[0] for person in job.get("hiring_team") or [])
+            entry.update(verified=best[1], profile_url=best[0], hold=None, employer=job.get("employer") or employer(call, best[1]),
+                         identity_basis=best[2] + ("; more junior than the titles named" if junior else "")
+                         + ("; named on the ad as the hiring contact" if on_ad else ""))
         elif repeat:
             entry["hold"] = "The owner of this work was already shown in an earlier run."
         elif candidates:
@@ -1222,6 +1281,9 @@ def job_contacts(project, call, per_job):
                                           employer_line(entry["employer"])])) if best else f"HELD: {entry['hold']}")
         print(terminal_text(f"{key} {job['company']}: {state}"), flush=True)
         t.atomic_json(project / "people.json", people)
+    t.atomic_json(project / "people.json", people)
+    if skipped:
+        print(f"{skipped} low-fit ads were left without an owner lookup.")
 
 
 # Work email
@@ -1494,10 +1556,10 @@ def main(argv=None):
     roles.add_argument("--limit", type=int, default=80)
     roles.add_argument("--retry-held", action="store_true", help="try held people again; lookups already paid for are reused")
     ads = commands.add_parser("jobs", help="search employer job ads and write the first job sheet")
-    ads.add_argument("--per-query", type=int, default=8)
+    ads.add_argument("--per-query", type=int, default=10, help="ads kept per query from LinkedIn, and again from the job boards")
     ads.add_argument("--lookback-days", type=int, default=90)
     owners = commands.add_parser("contacts", help="find and verify a current owner for each graded job mandate")
-    owners.add_argument("--per-job", type=int, default=4)
+    owners.add_argument("--per-job", type=int, default=4, help="profiles checked per ad before giving up")
     commands.add_parser("shortlist", help="write shortlist.md and shortlist.csv")
     answers = commands.add_parser("review", help="open a local page to say yes or no to each person")
     answers.add_argument("--port", type=int, default=8765)
@@ -1529,7 +1591,7 @@ def main(argv=None):
             print("plan.json, grades.json and job-grades.json are valid."
                   + (f" {quoted} quotes match their sources word for word." if quoted else ""))
         elif args.command == "sheet":
-            jobs_sheet(project, args.limit or 15) if args.jobs else sheet(project, args.limit or 60, max(300, args.chars))
+            jobs_sheet(project, args.limit or 20) if args.jobs else sheet(project, args.limit or 60, max(300, args.chars))
         elif args.command == "show":
             show(project, args.id)
         elif args.command == "shortlist":

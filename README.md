@@ -23,17 +23,26 @@ Paste this into a coding agent that can run commands on your computer, such as C
 
 > Clone https://github.com/enhance-labs-builds/self-sourcing-pudding (skip this if I already have it) and check I have Python 3.11 or later. Help me connect a Treg team. Then follow `docs/playbook.md` to find leads for `<my company URL>`. Our buyer is `<one sentence on who buys and why>`. Keep the run in a private folder outside the repository and stay under US$1. When the shortlist is ready, open the review page and tell me the funnel and the spend.
 
-That is the whole setup. The agent fetches the project, asks you to approve the commands it runs, and comes back in 10 to 25 minutes with a page where you press **Y** for yes, **N** for no or **M** for maybe. Your answers save as you go.
+That is the whole setup. The agent fetches the project, asks you to approve the commands it runs, and comes back in 20 to 40 minutes with a page where you press **Y** for yes, **N** for no or **M** for maybe. Your answers save as you go.
 
 Add the buyer sentence if you can. Your site says what you sell; you know who buys it.
 
 ### Which agent
 
-Start with Claude Sonnet. On this version it returned 33 people in 20 minutes for US$0.44 in lookups, 13 of them from X. A second model, judging blind, would message 24 of the 33 and rejected 2. It said yes to all eight graded strong.
+Start with Claude Sonnet. In our latest run it returned 53 people in 38 minutes for US$0.89 in lookups: 39 from LinkedIn posts, 8 from X and 6 from job ads. A second model, judging blind, would message 36 of the 53 and rejected none. It said yes to all twelve graded strong.
 
 Codex runs the playbook too and is stricter: on an earlier version it returned 9 people, and the second model would message 6. Claude Opus costs more and, on an earlier version, found no more than Sonnet.
 
 One run each, so read this as a direction.
+
+## What it touches
+
+- **Your LinkedIn and X accounts: never.** Pudding does not sign in to either, and it sends nothing.
+- **Treg: every paid lookup.** [Treg](https://treg.to) is a hosted service that sells data lookups by the call. Pudding is an independent client of it. Behind Treg, LinkedIn data (posts, profiles, companies and job ads) comes from HarvestAPI, X data from AnyAPI and the X API, search from Serper and Exa, and email from AnyAPI and Hunter.
+- **Your money: capped.** A run cannot spend more than the cap you set. Lookups cost US$0.25 to US$0.90 a run in our tests. Work email is a later step at about US$0.03 a person, inside the same cap, so set a higher cap at the start if you want email for the whole list. Treg advertises US$1 in starting credit for new accounts. [Treg pricing](https://treg.to/pricing)
+- **Your agent's usage: separate.** Our runs used roughly 250,000 to 410,000 tokens each, because the agent reads several hundred posts.
+- **Your computer: one private folder.** The run's files stay there, readable only by you. Pudding reads your company site and the job ads directly from your computer, under its own name. The names and profile links it looks up go to Treg and its providers, and the posts are read by your agent's model.
+- **Other people's data.** Pudding reads public posts and finds work email. Whether and how you may contact someone depends on your own obligations, including the platforms' terms and privacy law where you and they are.
 
 ### Connect Treg
 
@@ -50,7 +59,7 @@ Pudding reads those two values, or the Treg CLI's sign-in if they aren't set. It
 1. **The agent writes a search plan.** It reads your site and writes 25 to 35 LinkedIn searches in your buyer's voice, plus a dozen or more for X and a handful for job ads. Each pairs a tool they already use with a phrase such as "we switched" or "our renewal".
 2. **It searches and reads.** LinkedIn and X posts come back onto a reading sheet, roughly ordered so first-person posts about your topic come first. The agent reads several hundred, grades each author and copies the exact sentence that shows their own work.
 3. **Pudding verifies each person.** It confirms the LinkedIn identity and current role. It follows an X author to LinkedIn the way you would: the link on their profile, their website, a search on their name and the company in their bio. It accepts a profile only when two checkable things tie it to the account, and the agent works out the ones it can't. It also looks up each employer, flags anyone whose own company sells in your category, and the agent drops direct competitors and labels agencies, nearby sellers and giants.
-4. **It reads job ads.** An ad that assigns this work to a new hire points to the person who owns it today.
+4. **It reads job ads.** It searches LinkedIn's job listings and the employer job boards, one ad per employer. An ad that hands this work to a new hire, or describes a team working the way your buyer does, points to the person who owns it today. Pudding finds them from the ad's hiring team or LinkedIn's list of people at that employer.
 5. **You review.** A page on your computer shows one person at a time.
 6. **It finds work email** for the people you said yes to, and confirms each mailbox with a second provider.
 
@@ -84,14 +93,15 @@ Two more full runs, on other companies, each read and graded by Claude following
 | AI customer-support agents | Heads of support and customer experience | 15 |
 
 - "Worth contacting" is the agent's grade. Your yes is the one that counts, which is why the review page exists.
-- LinkedIn and X find most of the people: in our latest run 13 of 33 came from X. Job ads add a few when employers hire through the boards Pudding reads.
+- LinkedIn posts find most of the people. In our latest run 8 of 53 came from X and 6 from job ads; the run before, 13 of 33 came from X.
+- Job ads depend on the buyer. Run on its own for the CRM company, the job-ad step read 96 ads and found the owner behind 15, six of them strong. LinkedIn's job listings supplied a third of those and none of ours.
 - This is a short list for writing to people personally, with the evidence on every row. It is not a volume source.
 
 ## Where it works
 
 Pudding works when your buyers write about their work in public, in English, and name the tools they use. All three runs above were B2B software sold to people who post on LinkedIn and X.
 
-Expect less when your buyers rarely post, when your market isn't English-speaking, or when employers don't hire through the job boards Pudding reads: Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. A search can finish with few people.
+Expect less when your buyers rarely post or your market isn't English-speaking. Job ads come from LinkedIn and from Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. A search can finish with few people.
 
 ## Why you can trust a row
 

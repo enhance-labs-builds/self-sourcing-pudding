@@ -50,8 +50,8 @@ Read `site.md`. If the user told you who their buyer is, trust that over the sit
 | `seller_terms` | 8 to 12 phrases a company selling in or near this category uses about itself: `CRM implementation`, `HubSpot partner`, `RevOps agency`. Leave out the tools and words your buyers use about their own work. Matches are flagged for you to judge, not dropped. |
 | `linkedin_queries` | 25 to 35 queries across at least four angles. See below. |
 | `x_queries` | 12 to 20 queries. X needs broader phrasing than LinkedIn, and an X search costs a twentieth of a cent. |
-| `job_queries` | 4 to 6 job-ad searches: a title plus the tools or duties an ad would name. |
-| `owner_titles` | Titles of the people who own this work, used to find a contact behind a job ad. |
+| `job_queries` | 5 to 8 job-ad searches. Each is a short quoted phrase an ad would contain: a tool, a duty, or the buyer's own jargon, such as `"CRM migration"` or `"HubSpot admin"`. Put the phrase the ad must contain first: LinkedIn is searched on that phrase alone, the job boards on the whole query. Long strings of keywords return noise. |
+| `owner_titles` | Titles of the people who own this work, most likely owner first. They are used to find a contact behind a job ad, and when two people fit, the earlier title wins. |
 | `employer_topic` | One word or short phrase for follow-up searches at an employer, such as `CRM`. |
 
 ### Write queries the way a buyer talks
@@ -109,7 +109,7 @@ python3 pudding.py --project DIR sheet --limit 60
 
 Read `sheet.md` and grade every row in `grades.json`. Save your grades before you run `sheet` again: it writes the next batch over the last one. Teams describing their own work come first and job ads, job seekers and launch posts sink, but the order is a guide, not a ranking.
 
-- Read at least the first 150 authors. After that, stop when two batches in a row give you fewer than three prospects between them, counting every `prospect` you grade, whatever its fit.
+- Read at least the first 150 authors. After that, stop when two batches in a row give you fewer than three prospects between them, counting every `prospect` you grade, whatever its fit. Stop at 480 authors in any case: the rest of the run needs the time and the spend.
 - A row marked `Possible seller` has a headline that pitches this category or names a company you excluded. It reads later for that reason. A pitch is `no`. A post about their own team's pain is graded like anyone else's: someone who sells nearby often has the problem themselves.
 - A short post is shown whole. A row ending in `…` is cut to its most relevant stretch: `show P0012 P0040` prints posts in full with their parents, and `sheet --chars 1200` shows more of each long post. Copy a quote from text you can see in full.
 - The sheet shows one post per author and reads identical reshares once.
@@ -211,7 +211,9 @@ python3 pudding.py --project DIR jobs
 python3 pudding.py --project DIR sheet --jobs
 ```
 
-`jobs` writes the first 15 ads to `jobs-sheet.md`; `sheet --jobs` writes the next batch. Grade them in `job-grades.json`.
+`jobs` searches LinkedIn's job listings and the employer job boards for each query, keeps one ad per employer, and writes the 20 that say most about your topics to `jobs-sheet.md`. Grade those, then run `sheet --jobs` for the next 20. Read every ad: each is a company telling you what its team is doing, and there are only about a hundred. Grade them in `job-grades.json`.
+
+An ad from LinkedIn shows the employer's size, industry and description, and the hiring team when the ad names one. Use them before you grade: a staffing firm hiring for a client is `no`, and a company far from the buyer's size is `low`.
 
 ```json
 {
@@ -225,17 +227,17 @@ python3 pudding.py --project DIR sheet --jobs
 
 | Verdict | Use it when |
 | --- | --- |
-| `mandate` | The ad assigns this work to a role: owning the tool, migrating it, evaluating vendors. Name who owns that decision today. |
+| `mandate` | The ad shows this employer has the work. Either it assigns it to the hire (owning the tool, migrating it, evaluating vendors), or it describes the team's own way of working in your buyer's terms. Name who owns that decision today. |
 | `customer` | The employer already uses the product. |
 | `no` | Everything else. |
 
-Set `fit` to `low` and add a label when the ad names a competitor as the chosen tool.
+`strong` is an ad that states the problem or hands the work to this hire. `look` is an ad that only shows the team works the way your buyer does. Set `fit` to `low` and add a label when the employer is committed to a competitor, such as hiring someone to administer it. An employer moving off a tool, or still choosing, is not `low`.
 
 ```sh
 python3 pudding.py --project DIR contacts
 ```
 
-`contacts` first looks for someone you already verified at that employer, then searches for the most senior current owner and checks their role and employer. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
+`contacts` finds who owns the work today for every `strong` and `look` ad, in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
 
 ## 5. Shortlist and review
 
@@ -261,7 +263,7 @@ python3 pudding.py --project DIR shortlist
 
 ## Limits
 
-- LinkedIn and X search, LinkedIn comments, X replies and quote posts, employer job ads on the major boards.
+- LinkedIn and X search, LinkedIn comments, X replies and quote posts, job ads on LinkedIn and the major employer boards.
 - Quote posts need a metered read-only X connection on the Treg team. Without one they are skipped.
 - Pudding finds and verifies people. It sends nothing.
 - Real names and posts stay in the project folder. Keep it out of any repository.

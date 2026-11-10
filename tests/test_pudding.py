@@ -283,6 +283,7 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(pudding.owner_match("Chief Operating Officer", ["Head of Revenue Operations"]),
                          "company leader, not the named owner")
         self.assertTrue(pudding.same_employer("LIQID", "LIQID Investments GmbH"))
+        self.assertEqual(pudding.owner_match("RevOps Manager", ["Head of Revenue Operations"]), "named owner title")
         self.assertFalse(pudding.same_employer("Fig", "Figma"))
         self.assertFalse(pudding.same_employer("Litmus", "Litmus7"))
         self.assertFalse(pudding.same_employer("Campfire", "Campfire 3D"))
@@ -436,6 +437,10 @@ class AgentRunTest(unittest.TestCase):
         formal = {**soon, "text": "We are evaluating CRMs to replace Tool1 before our contract ends."}
         advice = {**soon, "text": "Thinking about alternatives to Tool1? Is your contract up for renewal soon? Here are 5 signs "
                                   "you should switch. If you're a founder, your team deserves better."}
+        quote = {**soon, "text": "Tool1 just sent our renewal quote and it is double. Kicking off an RFP next week."}
+        case = {**soon, "text": "We just moved another customer off Tool1. We migrated 40,000 records and we found three issues."}
+        self.assertGreater(pudding.score(quote, terms), pudding.score(done, terms))
+        self.assertGreater(pudding.score(quote, terms), pudding.score(case, terms))
         for buyer in (plain, formal):
             self.assertGreater(pudding.score(buyer, terms), pudding.score(done, terms))
             self.assertGreater(pudding.score(buyer, terms), pudding.score(advice, terms) + 10)
@@ -444,7 +449,8 @@ class AgentRunTest(unittest.TestCase):
         listing = self.project / "skip.txt"
         listing.write_text("# existing pipeline\nhttps://www.linkedin.com/in/Ada/?trk=x\nFig\n\n")
         skip = pudding.suppression(listing)
-        self.assertEqual(skip, {"profiles": ["https://www.linkedin.com/in/ada"], "companies": ["Fig"], "domains": [], "unread": 0})
+        self.assertEqual(skip, {"profiles": ["https://www.linkedin.com/in/ada"], "companies": ["Fig"], "domains": [],
+                                "company_pages": [], "unread": 0})
         listing.write_text("\n".join([
             "uk.linkedin.com/in/Bo-Other", "http://www.linkedin.com/in/cy/", "https://www.linkedin.com/sales/lead/ACwAAA,NAME",
             "dana@junipervale.com", "someone@gmail.com", "gong.io", "https://www.deel.com/pricing", "stripe.co.uk", '"Acme, Inc."']))
@@ -455,6 +461,17 @@ class AgentRunTest(unittest.TestCase):
         for company in ("Gong", "Deel, Inc.", "Juniper Vale Software", "Stripe", "Acme"):
             self.assertTrue(pudding.suppressed(company, export), company)
         self.assertFalse(pudding.suppressed("Gong Cha Tea", export))
+        # A CRM export with a header row: links and emails from any column, names from the Company column only.
+        listing.write_text("First Name,Last Name,Title,Company,Email,LinkedIn\n"
+                           "Dana,Lee,VP Sales,\"Brindle Freight, Inc.\",dana@brindle.example,https://www.linkedin.com/in/dana-lee\n"
+                           "Sam,Roe,Founder,Oriole Dune,sam@gmail.com,\n"
+                           "Kit,Vale,CTO,,,https://www.linkedin.com/company/hollis-bay/about/\n")
+        crm = pudding.suppression(listing)
+        self.assertEqual(crm, {"profiles": ["https://www.linkedin.com/in/dana-lee"], "companies": ["Brindle Freight, Inc.", "Oriole Dune"],
+                               "domains": ["brindle.example"], "company_pages": ["https://www.linkedin.com/company/hollis-bay"],
+                               "unread": 0})
+        self.assertTrue(pudding.suppressed("Anything", crm, "https://www.linkedin.com/company/hollis-bay"))
+        self.assertFalse(pudding.suppressed("VP Sales", crm))
         self.write("suppress.json", skip)
         other = {**POST, "author": "Bo Other", "profile": "https://www.linkedin.com/in/bo", "url": POST["url"].replace("0001", "0005")}
         posts = {}
@@ -512,6 +529,12 @@ class AgentRunTest(unittest.TestCase):
             raise ValueError("Could not read the company page (HTTP 403).")
 
         pudding.fetch_page = blocked
+        in_use = Path(folder.name) / "someone-elses-project"
+        in_use.mkdir()
+        (in_use / "notes.txt").write_text("keep me readable")
+        with self.assertRaisesRegex(ValueError, "already has files in it"):
+            pudding.start(in_use, "https://blocked.example", "1.00", 45)
+        self.assertEqual(sorted(path.name for path in in_use.iterdir()), ["notes.txt"])
         pudding.start(fresh, "https://blocked.example", "1.00", 45)
         self.assertIn("could not read this page", (fresh / "site.md").read_text())
         self.assertEqual(oct((fresh / "site.md").stat().st_mode & 0o777), "0o600")

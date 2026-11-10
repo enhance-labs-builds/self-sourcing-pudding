@@ -36,7 +36,7 @@ python3 pudding.py --project DIR start https://example.com --budget-usd 1.00
 
 If there was an earlier run, add `--previous OLD_DIR`. Pudding then leaves out everyone already shown and writes `feedback.md`: what the reviewer said yes and no to. Read it before you plan and before you grade.
 
-If the user has a list of people or companies already in their pipeline, add `--suppress FILE`: one LinkedIn profile link, work email, domain or company name per line. `start` says how many lines it could not use.
+If the user has people or companies already in their pipeline, add `--suppress FILE`. It takes a plain list (one LinkedIn link, work email, domain or company name per line) or a CRM export with a header row. `start` says how many lines it could not use; tell the user if that number is large.
 
 Read `site.md`. If the user told you who their buyer is, trust that over the site. If `start` says the site returned little text, ask the user to describe the product and the buyer. Then fill in `plan.json`:
 
@@ -104,7 +104,7 @@ python3 pudding.py --project DIR sheet --limit 60
 
 `search` names any query that returned nothing. Replace those and rerun `search`; only new queries are charged.
 
-Read `sheet.md` and grade every row in `grades.json`. Run `sheet` again for the next batch. Read at least the first 150 authors, and stop when two batches in a row give you almost nothing. `show P0012 P0040` prints posts in full with their parents. The sheet shows one post per author and reads identical reshares once.
+Read `sheet.md` and grade every row in `grades.json`. The sheet's order is a rough guide, not a ranking: good prospects turn up throughout the first few sheets. Run `sheet` again for the next batch. Read at least the first 150 authors, and stop when two batches in a row give you almost nothing. `show P0012 P0040` prints posts in full with their parents. The sheet shows one post per author and reads identical reshares once.
 
 ```json
 {

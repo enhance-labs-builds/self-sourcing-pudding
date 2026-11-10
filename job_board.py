@@ -16,7 +16,8 @@ STRUCTURED_BOARDS = {"jobs.ashbyhq.com", "jobs.lever.co", "jobs.eu.lever.co", "a
 ALIAS_ENDINGS = re.compile(r"\b(?:incorporated|inc|corp|corporation|llc|llp|ltd|limited|plc)\b", re.I)
 ROLE_ABBREVIATIONS = {"vp": "vice president", "svp": "senior vice president", "evp": "executive vice president",
                       "cto": "chief technology officer", "cfo": "chief financial officer",
-                      "ceo": "chief executive officer", "cx": "customer experience", "ops": "operations"}
+                      "ceo": "chief executive officer", "cx": "customer experience", "ops": "operations",
+                      "revops": "revenue operations", "bizops": "business operations"}
 ROLE_CONNECTORS = {"of", "and", "the", "for", "at"}
 LEADERSHIP = {"chief", "director", "head", "lead", "manager", "president"}
 ROLE_LEVEL = LEADERSHIP | {"associate", "executive", "junior", "principal", "senior", "specialist", "vice"}

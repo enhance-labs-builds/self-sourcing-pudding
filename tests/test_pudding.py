@@ -16,7 +16,7 @@ PLAN = {
     "buyer": "Founders and revenue operations leads.",
     "qualifies": "The author describes their own team's CRM.",
     "exclude_employers": ["Orbit CRM Inc"], "customers": ["Plum Labs"], "employer_topic": "CRM",
-    "owner_titles": ["Head of Revenue Operations"],
+    "owner_titles": ["Head of Revenue Operations"], "seller_terms": ["CRM consultancy", "CRM implementation"],
     "linkedin_queries": [f'"Tool{n}" "we switched"' for n in range(19)] + ['"Tool1" "our renewal"'],
     "x_queries": [f'"Tool{n}" ("we switched" OR "our team")' for n in range(8)], "job_queries": ["revops crm"],
 }
@@ -282,6 +282,13 @@ class AgentRunTest(unittest.TestCase):
                          "company leader, not the named owner")
         self.assertEqual(pudding.owner_match("Chief Operating Officer", ["Head of Revenue Operations"]),
                          "company leader, not the named owner")
+        # A leader the agent named is the named owner, however the profile writes the title.
+        self.assertEqual(pudding.owner_match("CEO/Co-Founder", ["CTO", "CEO"]), "named owner title")
+        self.assertEqual(pudding.owner_match("Chief Executive Officer", ["Founder", "CEO"]), "named owner title")
+        self.assertEqual(pudding.owner_match("Co-Founder", ["Founder"]), "named owner title")
+        self.assertEqual(pudding.owner_match("Chief Revenue Officer", ["Chief Technology Officer"]),
+                         "company leader, not the named owner")
+        self.assertIsNone(pudding.owner_match("Chief of Staff", ["CTO", "Head of Engineering"]))
         self.assertTrue(pudding.same_employer("LIQID", "LIQID Investments GmbH"))
         self.assertEqual(pudding.owner_match("RevOps Manager", ["Head of Revenue Operations"]), "named owner title")
         self.assertFalse(pudding.same_employer("Fig", "Figma"))
@@ -345,6 +352,14 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(oct((self.project / "grades.json").stat().st_mode & 0o777), "0o600")
         text = "Intro. " * 150 + "We rolled Tool7 out to our team last week. " + "Outro. " * 150
         self.assertIn("We rolled Tool7 out", pudding.excerpt(text, ["Tool7"]))
+        # A long post is cut to the stretch about the team's own work, on whole sentences. A short one is shown whole.
+        story = ("Tool7 is everywhere this year. " + "Vendors keep pitching it. " * 80
+                 + "We rolled Tool7 out in May. Our team cut review time in half. We still miss regressions. "
+                 + "That is all for now. " * 80)
+        cut = pudding.excerpt(story, ["Tool7"], 400)
+        self.assertTrue(cut.startswith("… ") and cut.endswith(". …"))
+        self.assertIn("Our team cut review time in half. We still miss regressions.", cut)
+        self.assertEqual(pudding.excerpt("One line.\nTwo lines.", ["Tool7"]), "One line. Two lines.")
         self.assertNotIn("<script", pudding.page_text("<p>Hello</p><script>var a = 1; self.__next_f.push(["))
 
     def test_a_second_run_skips_people_already_seen_and_learns_from_answers(self):
@@ -425,6 +440,120 @@ class AgentRunTest(unittest.TestCase):
         found["emails"].append({"email": "a.example@fig.example"})
         self.assertIsNone(pudding.work_address({"output": {"found": True, "data": {"linkedinUrl": POST["profile"], **found}}},
                                                POST["profile"], "fig.example"))
+
+    def test_job_ads_job_seekers_and_launch_posts_rank_below_a_team_describing_its_work(self):
+        terms = pudding.topic_terms(PLAN)
+        team = {**POST, "text": "Our team still tracks deals in Tool1 and a spreadsheet. We lose a day a week to it."}
+        ad = {**POST, "text": "We're hiring a RevOps Lead! We're looking for someone who knows Tool1. Apply now."}
+        seeker = {**POST, "text": "After five years running Tool1 for our team, I'm looking for my next role. #OpenToWork"}
+        recruiter = {**team, "headline": "Technical Recruiter at Fig"}
+        launch = {**POST, "text": "We built a Tool1 plugin at the weekend hackathon and won 2nd place. It is live on github.com/fig."}
+        for other in (ad, seeker, recruiter, launch):
+            self.assertGreater(pudding.score(team, terms), pudding.score(other, terms) + 5)
+        # "We're looking for" in a job ad is not buying intent, and a recruiter is a buyer when the plan says so.
+        self.assertLess(pudding.score(ad, terms), pudding.score({**ad, "text": "We use Tool1."}, terms))
+        self.assertEqual(pudding.score(recruiter, terms, "Heads of talent and recruiting leads"), pudding.score(team, terms))
+        # A team post that mentions hiring once, late, keeps its place.
+        aside = {**team, "text": team["text"] + " " + "More on that soon. " * 30 + "P.S. we're hiring."}
+        self.assertFalse(pudding.off_market(aside))
+
+    def test_a_seller_is_flagged_on_the_sheet_and_again_when_their_employer_is_known(self):
+        # The headline is a pitch for the category, or names a company the plan excluded. A tool in a skills list is neither.
+        self.assertEqual(pudding.seller(PLAN, "Founder at Dash | CRM implementation for startups"),
+                         "describes their own work as “CRM implementation”")
+        self.assertEqual(pudding.seller(PLAN, "Account Executive @ Orbit CRM Inc"), "works at Orbit CRM Inc, which you excluded")
+        self.assertIsNone(pudding.seller(PLAN, "RevOps Lead at Fig | HubSpot, Orbit CRM Inc, Tool1"))
+        self.assertIsNone(pudding.seller({**PLAN, "seller_terms": []}, "Founder at Dash | CRM implementation for startups"))
+        pitch = {**POST, "author": "Bo Seller", "profile": "https://www.linkedin.com/in/bo", "url": POST["url"].replace("0001", "0008"),
+                 "headline": "Founder at Dash | CRM implementation for startups", "text": POST["text"] + " It was worth it."}
+        posts = {}
+        pudding.add_posts(posts, [pitch, POST], "q")
+        self.write("posts.json", posts)
+        pudding.sheet(self.project, 10)
+        page = (self.project / "sheet.md").read_text()
+        self.assertLess(page.index("Ada Example"), page.index("Bo Seller"))  # Same words, but the seller reads second.
+        self.assertEqual(page.count("Possible seller: the headline describes their own work as “CRM implementation”."), 1)
+        # At verify the employer's own description and any second role are checked too.
+        self.write("grades.json", {"P0001": {"verdict": "prospect", "fit": "look", "why": "Own team.", "quote": "We switched off Tool1 in March."},
+                                   "P0002": {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1 in March."}})
+        page_url = "https://www.linkedin.com/company/fig"
+
+        def call(endpoint, params, transform):
+            if endpoint == t.COMPANY:
+                return transform({"element": {"linkedinUrl": page_url, "name": "Fig", "tagline": "A CRM consultancy for founders."}})
+            roles = [{"position": "CEO", "companyName": "Fig", "companyLinkedinUrl": page_url}]
+            if params["url"].endswith("/ada"):  # Ada's employer is described plainly, but she also advises an excluded company.
+                roles = [{"position": "CEO", "companyName": "Plain"}, {"position": "Advisor", "companyName": "Orbit CRM Inc"}]
+            return transform(profile(roles, url=params["url"]))
+
+        pudding.verify(self.project, call, 5)
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertEqual(people["P0001"]["seller"], "describes their own work as “CRM consultancy”")
+        self.assertEqual(people["P0002"]["seller"], "works at Orbit CRM Inc, which you excluded")
+        clean = {**POST, "headline": "Founder at Fig"}
+        self.assertIsNone(pudding.seller(PLAN, "CEO", clean["headline"], "Invoices for small teams."))
+        self.assertEqual(pudding.seller(PLAN, "CEO", clean["headline"], "A CRM consultancy for founders."),
+                         "describes their own work as “CRM consultancy”")
+        pudding.shortlist(self.project)
+        self.assertIn("possible seller: works at Orbit CRM Inc, which you excluded", (self.project / "shortlist.csv").read_text())
+        self.assertIn("seller_terms is empty", " ".join(pudding.plan_notes({**PLAN, "seller_terms": []})))
+
+    def test_a_repeated_search_is_quiet_and_status_counts_graded_ads(self):
+        import contextlib, io
+        searched = set()
+
+        def call(endpoint, params, transform):
+            searched.add(json.dumps([endpoint, params], sort_keys=True))
+            return []
+
+        call.done = lambda endpoint, params: json.dumps([endpoint, params], sort_keys=True) in searched
+        with contextlib.redirect_stdout(io.StringIO()) as first:
+            pudding.search(self.project, call)
+        with contextlib.redirect_stdout(io.StringIO()) as second:
+            pudding.search(self.project, call)
+        self.assertEqual(first.getvalue().count(" found, "), 28)
+        self.assertEqual(second.getvalue().count(" found, "), 0)
+        self.assertIn("28 searches were already done and were not charged again.", second.getvalue())
+        self.assertIn("Note: 28 queries returned nothing.", second.getvalue())
+        self.write("jobs.json", {"J001": {"id": "J001", "url": "https://jobs.ashbyhq.com/fig/1", "company": "Fig", "title": "Lead",
+                                          "published_on": "2026-10-01", "text": "You will own our CRM migration."}})
+        counts = pudding.funnel(self.project)
+        self.assertEqual((counts["Job ads found"], counts["Job ads graded"]), (1, 0))
+        self.assertIn("fields Pudding does not read: notes", " ".join(pudding.plan_notes({**PLAN, "notes": "x"})))
+
+    def test_verify_records_the_employer_and_work_email_reuses_it(self):
+        posts = {}
+        pudding.add_posts(posts, [POST], "q")
+        self.write("posts.json", posts)
+        self.write("grades.json", {"P0001": {"verdict": "prospect", "fit": "strong", "why": "Own team.",
+                                             "quote": "We switched off Tool1 in March."}})
+        page = "https://www.linkedin.com/company/fig"
+        company = {"element": {"linkedinUrl": page, "name": "Fig, Inc.", "website": "www.fig.example/?utm_source=linkedin",
+                               "employeeCount": 59, "industries": [{"name": "Software Development"}],
+                               "tagline": "Invoices for\nsmall teams."}}
+        calls = []
+
+        def call(endpoint, params, transform):
+            calls.append(endpoint)
+            if endpoint == t.COMPANY:
+                return transform(company)
+            return transform(profile([{"position": "CEO", "companyName": "Fig", "companyLinkedinUrl": page}]))
+
+        pudding.verify(self.project, call, 5)
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertEqual(people["P0001"]["employer"], {"name": "Fig, Inc.", "url": "https://www.fig.example/", "employees": 59,
+                                                       "industry": "Software Development", "about": "Invoices for small teams."})
+        self.assertEqual(calls, [t.PROFILE, t.COMPANY])
+        pudding.shortlist(self.project)
+        with (self.project / "shortlist.csv").open(newline="") as file:
+            row = next(csv.DictReader(file))
+        self.assertEqual((row["company_size"], row["company_industry"], row["company_about"]),
+                         ("59", "Software Development", "Invoices for small teams."))
+        self.assertIn("59 people · Software Development", (self.project / "shortlist.md").read_text())
+        # Another company's page is not this employer, and a missing website only blocks the email step.
+        self.assertIsNone(pudding.employer_record(company, page + "-other"))
+        self.assertIsNone(pudding.employer_record({"element": {"linkedinUrl": page, "name": "Fig"}}, page)["url"])
+        self.assertEqual(pudding.employer_line({"employees": 1200, "industry": "", "about": "Freight."}), "1,200 people on LinkedIn · Freight.")
 
     def test_someone_about_to_change_is_read_before_someone_who_already_has(self):
         done = {**POST, "text": "We switched off Tool1 in March. We migrated everything and we rebuilt the pipeline."}

@@ -23,16 +23,32 @@ Paste this into a coding agent that can run commands on your computer, such as C
 
 > Clone https://github.com/enhance-labs-builds/self-sourcing-pudding (skip this if I already have it) and check I have Python 3.11 or later. Help me connect a Treg team. Then follow `docs/playbook.md` to find leads for `<my company URL>`. Our buyer is `<one sentence on who buys and why>`. Keep the run in a private folder outside the repository and stay under US$1. When the shortlist is ready, open the review page and tell me the funnel and the spend.
 
-That is the whole setup. The agent fetches the project, asks you to approve the commands it runs, and comes back in 20 to 25 minutes with a page where you press **Y** for yes, **N** for no or **M** for maybe. Your answers save as you go.
+That is the whole setup. The agent fetches the project, asks you to approve the commands it runs, and comes back in 10 to 25 minutes with a page where you press **Y** for yes, **N** for no or **M** for maybe. Your answers save as you go.
 
 Add the buyer sentence if you can. Your site says what you sell; you know who buys it.
+
+### Which agent
+
+Start with Claude Sonnet. We gave three agents the same brief and had a second model judge their lists blind.
+
+| Agent | Worth contacting | Second model would message | Time |
+| --- | --- | --- | --- |
+| Claude Sonnet | 18 | 13 | 12 minutes |
+| Codex (GPT-6.1) | 9 | 6 | 17 minutes |
+| Claude Opus | 25 | 7 | about 20 minutes |
+
+- **Sonnet found the most people worth a message, fastest.** The second model rejected none of its 18 and said yes to all five it graded strong.
+- **Codex is stricter.** It returns a short list with little to throw away.
+- **Opus costs more and found no more.**
+
+One run each, so read this as a direction. Sonnet's run had this version's reading order and employer lookup; Codex and Opus ran before them.
 
 ## What it touches
 
 - **Your LinkedIn and X accounts: never.** Pudding does not sign in to either, and it sends nothing.
 - **Treg: every paid lookup.** [Treg](https://treg.to) is a hosted service that sells data lookups by the call. Pudding is an independent client of it. Behind Treg, LinkedIn data comes from HarvestAPI, X data from AnyAPI and the X API, search from Serper and Exa, and email from AnyAPI and Hunter.
 - **Your money: capped.** A run cannot spend more than the cap you set. Lookups cost under US$0.60 a run in our tests. Work email is a later step at about US$0.03 a person, inside the same cap, so set a higher cap at the start if you want email for the whole list. Treg advertises US$1 in starting credit for new accounts. [Treg pricing](https://treg.to/pricing)
-- **Your agent's usage: separate.** Our runs used roughly 280,000 to 390,000 tokens each, because the agent reads several hundred posts.
+- **Your agent's usage: separate.** Our runs used roughly 250,000 to 390,000 tokens each, because the agent reads several hundred posts.
 - **Your computer: one private folder.** The run's files stay there, readable only by you. Pudding reads your company site and the job ads directly from your computer, under its own name. The names and profile links it looks up go to Treg and its providers, and the posts are read by your agent's model.
 - **Other people's data.** Pudding reads public posts and finds work email. Whether and how you may contact someone depends on your own obligations, including the platforms' terms and privacy law where you and they are.
 
@@ -50,12 +66,12 @@ Pudding reads those two values, or the Treg CLI's sign-in if they aren't set. It
 
 1. **The agent writes a search plan.** It reads your site and writes 25 to 35 LinkedIn searches in your buyer's voice, plus a dozen for X and a handful for job ads. Each pairs a tool they already use with a phrase such as "we switched" or "our renewal".
 2. **It searches and reads.** LinkedIn and X posts come back onto a reading sheet, roughly ordered so first-person posts about your topic come first. The agent reads several hundred, grades each author and copies the exact sentence that shows their own work.
-3. **Pudding verifies each person.** It confirms the LinkedIn identity and current role. It ties an X account to LinkedIn only by a link on the profile, or a matching name plus company or handle.
+3. **Pudding verifies each person.** It confirms the LinkedIn identity and current role. It ties an X account to LinkedIn only by a link on the profile, or a matching name plus company or handle. It also looks up each employer, flags anyone whose own company sells in your category, and the agent drops the sellers and agencies and marks the giants.
 4. **It reads job ads.** An ad that assigns this work to a new hire points to the person who owns it today.
 5. **You review.** A page on your computer shows one person at a time.
 6. **It finds work email** for the people you said yes to, and confirms each mailbox with a second provider.
 
-The shortlist is `shortlist.csv` in the run folder. It has each person's name, role, company, location, LinkedIn link, quote and source, plus your answer. The email step adds their address and the company's domain.
+The shortlist is `shortlist.csv` in the run folder. It has each person's name, role, company, the company's size and industry, location, LinkedIn link, quote and source, plus your answer. The email step adds their address and the company's domain.
 
 Next time, start with `--previous`. Pudding leaves out everyone you have seen and shows the agent what you said yes and no to. Add `--suppress` with a list or a CRM export to leave out people already in your pipeline. A LinkedIn profile link leaves out that person; a work email, domain, company link or company name leaves out the whole company.
 
@@ -98,8 +114,9 @@ Expect less when your buyers rarely post, when your market isn't English-speakin
 
 - **The quote is real.** Pudding rejects a grade unless the quote appears word for word in the captured post or ad.
 - **The role is current.** Each person is checked against LinkedIn when the run looks them up, and the shortlist says what the check rested on.
+- **The employer is described.** Its size on LinkedIn, its industry and its own one-line description sit on the row, so an agency or a bank with 80,000 staff is obvious.
 - **A hiring signal is labelled as one.** Its quote is from the employer's job ad, and the person is whoever owns that work today.
-- **Doubt is written down.** An agency, a solo founder, a role outside your buyer list: these are labels on the row, so you decide.
+- **Doubt is written down.** A possible seller, an agency, a solo founder, a role outside your buyer list: these are labels on the row, so you decide.
 - **Weak matches stand apart.** Low-fit people, existing customers and anyone who couldn't be identified each get their own section.
 - **Spend is capped.** Every paid lookup goes through one cap and leaves a receipt. A finished lookup is never charged twice.
 
@@ -121,7 +138,7 @@ python3 pudding.py --project ~/pudding-runs/acme start https://acme.example --bu
 | `search` | Runs the LinkedIn and X searches. |
 | `sheet` | Writes the next reading sheet. `--jobs` for job ads. |
 | `show ID…` | Prints posts or ads in full. |
-| `verify` | Confirms identity and current role. |
+| `verify` | Confirms identity and current role, and looks up the employer. |
 | `spider` | Optional. Opens threads under graded posts. |
 | `jobs`, `contacts` | Finds job ads, then the person who owns the work. |
 | `shortlist` | Writes `shortlist.md` and `shortlist.csv`. |

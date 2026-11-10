@@ -47,6 +47,7 @@ Read `site.md`. If the user told you who their buyer is, trust that over the sit
 | `qualifies` | What a post must show: the author's own team doing, changing or struggling with this work. |
 | `exclude_employers` | The company itself and its direct competitors. |
 | `customers` | Every customer the site names. Their people are reported as customers, not prospects. |
+| `seller_terms` | 8 to 12 phrases a company selling in this category uses about itself: `CRM implementation`, `HubSpot partner`, `RevOps agency`. Leave out the tools and words your buyers use about their own work. |
 | `linkedin_queries` | 25 to 35 queries across at least four angles. See below. |
 | `x_queries` | 10 to 15 queries. X needs broader phrasing than LinkedIn. |
 | `job_queries` | 4 to 6 job-ad searches: a title plus the tools or duties an ad would name. |
@@ -102,9 +103,14 @@ python3 pudding.py --project DIR search
 python3 pudding.py --project DIR sheet --limit 60
 ```
 
-`search` names any query that returned nothing. Replace those and rerun `search`; only new queries are charged.
+`search` names any query that returned nothing. Replace those and rerun `search`; only new queries are charged or printed.
 
-Read `sheet.md` and grade every row in `grades.json`. The sheet's order is a rough guide, not a ranking: good prospects turn up throughout the first few sheets. Run `sheet` again for the next batch. Read at least the first 150 authors, and stop when two batches in a row give you almost nothing. `show P0012 P0040` prints posts in full with their parents. The sheet shows one post per author and reads identical reshares once.
+Read `sheet.md` and grade every row in `grades.json`. Save your grades before you run `sheet` again: it writes the next batch over the last one. Teams describing their own work come first and job ads, job seekers and launch posts sink, but the order is a guide, not a ranking.
+
+- Read at least the first 150 authors. After that, stop when two batches in a row give you fewer than three prospects between them, counting every `prospect` you grade, whatever its fit.
+- A row marked `Possible seller` has a headline that pitches this category or names a company you excluded. It reads later for that reason. Grade it `no` unless the post is plainly a buyer describing their own team.
+- A short post is shown whole. A row ending in `…` is cut to its most relevant stretch: `show P0012 P0040` prints posts in full with their parents, and `sheet --chars 1200` shows more of each long post. Copy a quote from text you can see in full.
+- The sheet shows one post per author and reads identical reshares once.
 
 ```json
 {
@@ -130,13 +136,28 @@ Read `sheet.md` and grade every row in `grades.json`. The sheet's order is a rou
 
 A short reply can be a prospect if it describes the author's own work. Agreement, advice and a job title are not evidence.
 
+`prospect`, `customer`, `churned` and `built_own` need a `quote` and a `why`. `borderline` and `no` can be the plain string, as `P0013` is above. Every row needs a grade, or it comes back on the next sheet.
+
 ## 3. Verify
 
 ```sh
 python3 pudding.py --project DIR verify
 ```
 
-`verify` confirms each prospect's LinkedIn identity and current role. For an X author it uses a LinkedIn link on the X profile, or a LinkedIn profile with the same name and a shared company or handle, and holds anyone it cannot tie down. If the verified role contradicts the post, change the grade. `verify --retry-held` tries held people again.
+`verify` confirms each prospect's LinkedIn identity and current role. For an X author it uses a LinkedIn link on the X profile, or a LinkedIn profile with the same name and a shared company or handle, and holds anyone it cannot tie down. `verify --retry-held` tries held people again.
+
+It also looks up each employer and prints its size on LinkedIn, its industry and its own one-line description:
+
+```text
+P0012 Ada Example: CTO, Fig · 59 people on LinkedIn · Software Development · Invoices for small teams.
+```
+
+**Read every line and regrade before you go on.** The post told you about the person; this tells you about the company.
+
+- `POSSIBLE SELLER` on the line: the employer's own description, a second role on the profile or the headline matches your `seller_terms`, or they work at a company you excluded. They are talking about a problem their own company sells the answer to. Grade `no` unless you can see they are a buyer. If you keep them, the shortlist row carries the flag.
+- An agency, consultancy, outsourcing firm or recruiter: `no`, unless the post is plainly about a product they own.
+- A company far larger or smaller than the buyer you were given, or in the wrong business: `low`, or `look` with a label such as `larger company`.
+- A role that contradicts the post: change the grade to match what is true now.
 
 ### Optional: follow the threads
 
@@ -180,7 +201,7 @@ Set `fit` to `low` and add a label when the ad names a competitor as the chosen 
 python3 pudding.py --project DIR contacts
 ```
 
-`contacts` first looks for someone you already verified at that employer, then searches for the most senior current owner and checks their role. It says whether the person holds a title you named, works in the same function, or is a company leader. A hiring signal says the work is live. It does not say a purchase is open.
+`contacts` first looks for someone you already verified at that employer, then searches for the most senior current owner and checks their role and employer. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
 
 ## 5. Shortlist and review
 
@@ -189,7 +210,7 @@ python3 pudding.py --project DIR shortlist
 python3 pudding.py --project DIR review
 ```
 
-`shortlist.md` leads with the people worth contacting. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person with a `fit` column.
+`shortlist.md` leads with the people worth contacting. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person with a `fit` column and their employer's size and industry.
 
 `review` opens a page on this computer where the user says yes, no or maybe to each person. Answers save to `review.json` as they click. Tell the user the address it prints and leave it running.
 

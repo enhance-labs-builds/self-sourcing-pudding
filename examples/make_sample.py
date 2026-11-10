@@ -70,6 +70,10 @@ def person(name, role, company, city, country):
             "company_url": "https://profiles.example/company/" + company.split()[0].lower()}
 
 
+def employer(people, industry, about):
+    return {"name": "", "url": None, "employees": people, "industry": industry, "about": about}
+
+
 def entry(index, verified, channel="linkedin", **more):
     return {"channel": channel, "source_url": POSTS[index]["url"], "hold": None, "profile_url": POSTS[index]["profile"],
             "verified": verified, **more}
@@ -77,16 +81,21 @@ def entry(index, verified, channel="linkedin", **more):
 
 PEOPLE = {
     "P0001": entry(0, person("Nia Alder", "Head of Procurement", "Juniper Vale Software", "Leeds, United Kingdom", "GB"),
-                   work_email={"status": "verified", "address": "nia.alder@junipervale.example"}, company_domain="junipervale.example"),
-    "P0002": entry(1, person("Priya Rowan", "Procurement Operations Manager", "Ashmere Hospitality", "Austin, Texas", "US")),
+                   work_email={"status": "verified", "address": "nia.alder@junipervale.example"}, company_domain="junipervale.example",
+                   employer=employer(140, "Software Development", "Scheduling software for clinics.")),
+    "P0002": entry(1, person("Priya Rowan", "Procurement Operations Manager", "Ashmere Hospitality", "Austin, Texas", "US"),
+                   employer=employer(620, "Hospitality", "Boutique hotels in eleven cities.")),
     "P0003": entry(2, person("Mara Holt", "Procurement Operations Manager", "Oriole Dune Robotics", "Toronto, Canada", "CA"),
-                   channel="x", identity_basis="web search: same name and orioledune"),
-    "P0004": entry(3, person("Tomas Reyes", "Controller", "Brindle Freight", "Rotterdam, Netherlands", "NL")),
+                   channel="x", identity_basis="web search: same name and orioledune",
+                   employer=employer(85, "Robotics Engineering", "Warehouse robots for mid-sized retailers.")),
+    "P0004": entry(3, person("Tomas Reyes", "Controller", "Brindle Freight", "Rotterdam, Netherlands", "NL"),
+                   employer=employer(2300, "Freight and Package Transportation", "European road and sea freight.")),
     "P0006": {"channel": "x", "source_url": POSTS[5]["url"], "verified": None, "x_name": "Wren",
               "hold": "No LinkedIn identity: the X profile shows no full name."},
     "J001": {"channel": "jobs", "source_url": JOB["url"], "hold": None, "profile_url": "https://profiles.example/idris",
              "verified": person("Idris Vale", "Head of Procurement", "Hollis Bay Health", "Denver, Colorado", "US"),
-             "identity_basis": "named owner title"},
+             "identity_basis": "named owner title",
+             "employer": employer(1900, "Hospitals and Health Care", "A regional hospital group.")},
 }
 
 
@@ -98,6 +107,7 @@ def build(folder):
         "product": "Juniper Approvals, a fictional purchase-approvals tool.", "buyer": "Procurement and finance operations leads.",
         "qualifies": "The author describes their own team's purchase approvals.", "exclude_employers": ["Juniper Approvals"],
         "customers": ["Larkfield Foods"], "employer_topic": "procurement", "owner_titles": ["Head of Procurement"],
+        "seller_terms": ["procurement consulting", "spend management platform"],
         "linkedin_queries": [f'"Tool{n}" "we switched"' for n in range(5)], "x_queries": [], "job_queries": JOB["found_by"]})
     write("posts.json", {row["id"]: row for row in POSTS})
     write("grades.json", GRADES)
@@ -106,9 +116,9 @@ def build(folder):
     write("people.json", PEOPLE)
     write("review.json", {POSTS[0]["profile"]: {"vote": "yes", "note": "Exactly who we sell to."}})
     (project / "ledger").mkdir()
-    # Fourteen lookups: two searches, a job search, an owner search, six role checks and four email calls.
+    # Nineteen lookups: two searches, a job search, an owner search, six role checks, five employers and four email calls.
     write("ledger/treg-run.json", {"plan": {}, "org": "example", "id": "sample",
-                                   "calls": {str(n): {"status": "settled", "cost_micro": 3000} for n in range(14)}})
+                                   "calls": {str(n): {"status": "settled", "cost_micro": 3000} for n in range(19)}})
     pudding.shortlist(project)
     note = ("# Sample shortlist\n\nEvery person, company, post and address here is fictional, and so are the counts and the spend. "
             "`examples/make_sample.py` writes this file with the same code a real run uses, so the layout is exact.\n")

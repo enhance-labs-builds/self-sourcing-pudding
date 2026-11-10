@@ -42,7 +42,9 @@ h1 { font-size:18px; margin:0; font-weight:600; }
 .meta { color:var(--soft); font-size:13px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px; }
 .name { font-size:22px; font-weight:600; margin:0; overflow-wrap:anywhere; }
 .name a { color:inherit; text-decoration:underline; text-decoration-color:var(--line); text-underline-offset:4px; }
-.role { color:var(--soft); margin:2px 0 14px; overflow-wrap:anywhere; }
+.role { color:var(--soft); margin:2px 0 4px; overflow-wrap:anywhere; }
+.employer { color:var(--soft); font-size:13px; margin:0 0 14px; overflow-wrap:anywhere; }
+.role:not(:has(+ .employer)) { margin-bottom:14px; }
 blockquote { margin:0 0 12px; padding:2px 0 2px 14px; border-left:3px solid var(--line); font-size:17px; overflow-wrap:anywhere; }
 .why { margin:0 0 12px; }
 .links { font-size:14px; color:var(--soft); margin:0 0 12px; }
@@ -100,6 +102,8 @@ function draw() {
   card.append(el("div", "meta", `${r_fit(row.fit)} · ${row.kind} · ${row.channel}${row.published_on ? " · " + row.published_on : ""}`));
   const name = el("h2", "name"); name.append(link(row.name, row.profile_url)); card.append(name);
   card.append(el("p", "role", row.company ? `${row.role}, ${row.company}` : row.role));
+  const facts = [row.company_size ? `${Number(row.company_size).toLocaleString()} ${row.company_size == 1 ? "person" : "people"} on LinkedIn` : "", row.company_industry, row.company_about].filter(Boolean);
+  if (facts.length) card.append(el("p", "employer", facts.join(" · ")));
   card.append(el("blockquote", "", row.quote));
   card.append(el("p", "why", row.why));
   const links = el("p", "links"); links.append(link("Source", row.source_url));

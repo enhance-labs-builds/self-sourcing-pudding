@@ -17,6 +17,8 @@ Each person comes with their current role, the sentence that earned them a place
 
 A hiring signal comes from a job ad that shows the team has the problem. The person on the row is whoever owns that work there today.
 
+Everything on the list is recent. Pudding reads posts from the last 45 days and job ads from the last 90, and checks each person's current role on LinkedIn on the day it runs. On our own run, the typical post was 11 days old and every job ad was under four weeks old.
+
 You review them one at a time on a page on your own computer, pressing **Y**, **N** or **M** for yes, no or maybe:
 
 ![The review page: one person, their role and employer, the quote, and Yes, No and Maybe buttons](docs/review-page.jpg)
@@ -148,7 +150,7 @@ Your agent runs these. [The playbook](docs/playbook.md) is its manual; you don't
 | `verify` | Confirms identity and current role, and describes the employer. |
 | `timeline @handle`, `web "query"` | Helps your agent place an X author: their recent posts, and a web search. |
 | `spider` | Optional. Reads the replies under posts your agent has graded. |
-| `jobs`, `contacts` | Finds job ads, then the person who owns the work. |
+| `jobs`, `contacts` | Finds job ads, then the person who owns the work. `--lookback-days N` changes how far back `jobs` reads, 90 days by default. |
 | `shortlist` | Writes `shortlist.md` and `shortlist.csv`. |
 | `review` | Starts the review page on your computer and prints its address. |
 | `enrich` | Finds work email for your yes answers. |

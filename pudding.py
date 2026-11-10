@@ -1,0 +1,1113 @@
+#!/usr/bin/env python3
+"""Run Pudding with a coding agent making the judgment calls.
+
+The agent writes the search plan, reads the posts, grades the evidence and names who to check.
+This module does the lookups under one spend cap, keeps the receipts, and refuses any quote
+that is not in the captured source. See docs/playbook.md for the playbook an agent follows.
+"""
+
+import argparse
+import csv
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+import hashlib
+from html import unescape
+import io
+import json
+import os
+from pathlib import Path
+import re
+import sys
+from urllib.parse import urljoin, urlsplit
+
+import job_board
+import treg as t
+from webpage import Page, fetch_page, public_url, terminal_text
+
+VERDICTS = {"prospect", "customer", "churned", "built_own", "borderline", "no"}
+JOB_VERDICTS = {"mandate", "customer", "no"}
+QUOTED = {"prospect", "customer", "churned", "built_own"}
+FITS = ("strong", "look", "low")
+LIMITS = {"linkedin_queries": (5, 40), "x_queries": (0, 15), "job_queries": (0, 8)}
+SITE_PAGES = ("customer", "case-stud", "pricing", "compare", "about", "solution", "product", "platform")
+OWNERS = {"ceo", "founder", "cofounder", "owner", "president", "coo", "cro", "chief"}
+OWN = re.compile(
+    r"\b(?:we|our team|i)\s+(?:just |recently |finally |had to |have |are |were |was |also |then |actually )?"
+    r"(?:use|used|switched|moved|migrated|replaced|rebuilt|rolled out|built|chose|picked|evaluated|outgrew|"
+    r"cut|cancell?ed|left|ditched|adopted|run|ran|set up|spent|tried|tested|shipped|deployed|found|fixed|"
+    r"debugged|hit|added|reduced|saw|noticed|learned)\b", re.I)
+NOISE = re.compile(
+    r"\b(?:webinar|register|we're hiring|hiring|job opening|apply now|book a (?:call|demo)|dm me|free audit|"
+    r"we help|our clients?|for (?:a|our|my) clients?|certified partner|solutions partner|course|bootcamp|"
+    r"newsletter|interview questions|link in (?:the )?comments?)\b", re.I)
+GENERIC_EMPLOYER = {"selfemployed", "freelance", "stealth", "stealthstartup", "confidential", "independent"}
+CSV_FIELDS = ("fit", "kind", "name", "role", "company", "profile_url", "role_basis", "identity_basis", "channel",
+              "source_url", "published_on", "quote", "why", "labels", "other_sources", "your_answer", "your_note",
+              "work_email", "work_email_status")
+
+
+def read(path, default=None):
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else default
+
+
+def norm(text):
+    return " ".join((text or "").replace("’", "'").replace("‘", "'").split())
+
+
+def compact(text):
+    return re.sub(r"[^a-z0-9]", "", (text or "").casefold())
+
+
+def save(path, text):
+    """Project files hold real names. Keep them readable by the owner only."""
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8", newline="") as file:
+        file.write(text)
+
+
+def lock_down(project):
+    # The agent creates grades.json and job-grades.json itself, usually world-readable.
+    if (project / "project.json").exists():
+        project.chmod(0o700)
+        for path in project.iterdir():
+            if path.is_file():
+                path.chmod(0o600)
+
+
+def page_text(html, limit=10000):
+    body = re.sub(r"<(script|style|noscript)[^>]*>.*?</\1\s*>", " ", html, flags=re.S | re.I)
+    last = max(body.casefold().rfind("<script"), body.casefold().rfind("<style"))
+    if last >= 0:  # A page cut off mid-download leaves its final script open.
+        body = body[:last]
+    return " ".join(unescape(re.sub(r"<[^>]+>", " ", body)).split())[:limit]
+
+
+def credentials():
+    token, org = os.environ.get("TREG_TOKEN"), os.environ.get("TREG_ORG")
+    config = read(Path.home() / ".treg/config.json", {})
+    token, org = token or config.get("token"), org or config.get("active_org")
+    if not token or not org:
+        raise ValueError("Set TREG_TOKEN and TREG_ORG, or sign in with the Treg CLI, before a paid step.")
+    return token, org
+
+
+@contextmanager
+def ledger(project):
+    """Yield call(endpoint, params, transform). Every paid call shares the project's cap and receipts."""
+    state = read(project / "project.json")
+    token, org = credentials()
+    client = t.Treg(token, org)
+    wanted = (t.LINKEDIN, t.X, t.PROFILE, t.LINKEDIN_COMMENTS, t.X_REPLIES, t.X_PROFILE, t.BUYER_WEB, t.SEMANTIC_PEOPLE,
+              *t.EMAIL_ENDPOINTS)
+    quotes = client.preflight({t.LINKEDIN, t.X, t.PROFILE}, include_x_quotes=True)
+    for endpoint in wanted[3:]:
+        try:
+            quotes.update(client.endpoint_prices({endpoint}))
+        except ValueError as error:
+            print(f"{endpoint} is unavailable: {error}")
+    out = project / "ledger"
+    plan = {"budget_micro": state["budget_micro"], "purpose": "agent-led run", "url": state["url"]}
+    with t.journal(out, plan, org, (out / "treg-run.json").exists(),
+                   caller=hashlib.sha256(token.encode()).hexdigest()) as (path, run):
+        def call(endpoint, params, transform):
+            if endpoint not in quotes:
+                return None
+            # AnyAPI can route replies and profiles to a dearer provider. Reserve the documented worst case.
+            quote = t.PER_CALL[endpoint] if endpoint in {t.X_REPLIES, t.X_PROFILE} else quotes[endpoint]
+            return t.bounded_call(client, path, run, endpoint, params, quote, transform)
+
+        call.available = set(quotes)
+        yield call
+        print(f"Spent US${t.dollars(t.billing(run))} of US${t.dollars(state['budget_micro'])} across {len(run['calls'])} calls.")
+
+
+def spend(project):
+    run = read(project / "ledger/treg-run.json", {"calls": {}})
+    return t.billing(run), len(run["calls"]), len(t.pending_calls(run))
+
+
+# Plan
+
+def carry_over(project, previous):
+    """Bring the reviewer's answers from an earlier run: who to skip, and what a yes and a no looked like."""
+    rows, *_ = shortlist_rows(previous)
+    votes = read(previous / "review.json", {})
+    seen = {**read(previous / "previous.json", {}),
+            **{row["profile_url"]: {"name": row["name"], **{k: votes.get(row["profile_url"], {}).get(k) for k in ("vote", "note")}}
+               for row in rows}}
+    t.atomic_json(project / "previous.json", seen)
+    lines = ["# What the reviewer said last time", "",
+             "Read this before you write the plan and before you grade. Find more people like the yes answers.", ""]
+    for vote, title in (("yes", "Said yes"), ("no", "Said no"), ("maybe", "Said maybe")):
+        found = [row for row in rows if votes.get(row["profile_url"], {}).get("vote") == vote]
+        if found:
+            lines += [f"## {title} ({len(found)})", ""]
+            for row in found:
+                note = votes[row["profile_url"]].get("note")
+                lines += [f"- **{row['role']}, {row['company'] or 'no employer listed'}** ({row['fit']}, {row['kind']}): "
+                          f"“{row['quote']}”" + (f" Reviewer's note: {note}" if note else "")]
+            lines.append("")
+    if len(lines) == 4:
+        lines.append("Nobody was reviewed in the earlier run.")
+    save(project / "feedback.md", terminal_text("\n".join(lines)) + "\n")
+    return len(seen), sum(bool(entry.get("vote")) for entry in seen.values())
+
+
+def start(project, url, budget_usd, window_days, previous=None):
+    if (project / "project.json").exists():
+        raise ValueError(f"{project} already holds a run. Choose a new project folder.")
+    if previous and not (previous / "project.json").exists():
+        raise ValueError(f"{previous} is not an earlier run folder.")
+    site = public_url(url, keep_query=True)
+    final, html = fetch_page(site)
+    host = urlsplit(final).hostname
+    pages = [(final, html)]
+    links = {}
+    for href in Page(html).links:
+        try:
+            link = public_url(urljoin(final, href))
+        except ValueError:
+            continue
+        path = urlsplit(link).path.casefold()
+        rank = next((index for index, word in enumerate(SITE_PAGES) if word in path), None)
+        if urlsplit(link).hostname == host and rank is not None and link != final:
+            links.setdefault(link, (rank, path.count("/"), len(links)))
+    for link in sorted(links, key=links.get)[:5]:  # Customer and pricing pages say the most about the buyer.
+        try:
+            pages.append(fetch_page(link))
+        except (OSError, ValueError):
+            continue
+    project.mkdir(parents=True, mode=0o700, exist_ok=True)
+    save(project / ".gitignore", "*\n")
+    t.atomic_json(project / "project.json", {
+        "url": final, "budget_micro": t.micro_dollars(budget_usd), "window_days": window_days,
+        "created": datetime.now(timezone.utc).date().isoformat()})
+    save(project / "site.md", "\n\n".join(f"## {page}\n\n{page_text(body)}" for page, body in pages) + "\n")
+    if not (project / "plan.json").exists():
+        t.atomic_json(project / "plan.json", {
+            "product": "", "buyer": "", "qualifies": "", "exclude_employers": [], "customers": [],
+            "employer_topic": "", "linkedin_queries": [], "x_queries": [], "job_queries": [], "owner_titles": []})
+    if previous:
+        seen, answered = carry_over(project, previous)
+        print(f"Carried over {seen} people from the earlier run, {answered} with an answer. Read {project / 'feedback.md'}.")
+    print(f"Read {len(pages)} pages into {project / 'site.md'}. Write {project / 'plan.json'}, then run check.")
+
+
+def load_plan(project):
+    plan = read(project / "plan.json")
+    if not isinstance(plan, dict):
+        raise ValueError("Write plan.json first. Run start to create the project.")
+    for key in ("product", "buyer", "qualifies"):
+        if not isinstance(plan.get(key), str) or not plan[key].strip():
+            raise ValueError(f"plan.json needs a sentence for {key}.")
+    for key in ("exclude_employers", "customers", "owner_titles", *LIMITS):
+        values = plan.setdefault(key, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() or "\n" in v or len(v) > 240
+                                               for v in values):
+            raise ValueError(f"plan.json {key} needs a list of single-line strings.")
+        if len(set(values)) != len(values):
+            raise ValueError(f"plan.json {key} repeats a value.")
+    for key, (low, high) in LIMITS.items():
+        if not low <= len(plan[key]) <= high:
+            raise ValueError(f"plan.json needs {low} to {high} {key}.")
+    if not isinstance(plan.setdefault("employer_topic", ""), str):
+        raise ValueError("plan.json employer_topic needs a word or short phrase.")
+    return plan
+
+
+def plan_notes(plan, searched=False):
+    notes = []
+    loose = [q for q in plan["linkedin_queries"] if q.count('"') < 4]
+    if loose:
+        notes.append(f"{len(loose)} LinkedIn queries are not two quoted phrases; loose queries return mostly noise: "
+                     + "; ".join(loose[:3]))
+    voiced = sum(bool(re.search(r'"(?:we|our|i) ', q, re.I)) for q in plan["linkedin_queries"])
+    if voiced < len(plan["linkedin_queries"]) / 2:
+        notes.append("Fewer than half the LinkedIn queries carry a first-person phrase such as \"we switched\".")
+    if plan["job_queries"] and not plan["owner_titles"]:
+        notes.append("Add owner_titles so job ads can be tied to a current owner.")
+    if len(plan["x_queries"]) < 8:
+        notes.append("Fewer than 8 X queries. X returns up to 20 posts a query, so it needs more of them.")
+    if plan["x_queries"] and not any(re.search(r'"(?:our team|we use)"', q, re.I) for q in plan["x_queries"]):
+        notes.append('No X query includes a broad phrase such as "our team" or "we use"; narrow X queries often return nothing.')
+    if not plan.get("customers") and not searched:
+        notes.append("customers is empty. List any customers the site names so they are not reported as prospects. "
+                     "If it names none, leave it empty.")
+    return notes
+
+
+def topic_terms(plan):
+    phrases = [p for q in plan["linkedin_queries"] + plan["x_queries"] for p in re.findall(r'"([^"]+)"', q)]
+    return list(dict.fromkeys(p for p in phrases if not re.match(r"(?:we|our|i)\b", p, re.I)))
+
+
+# Posts
+
+def load_posts(project):
+    return read(project / "posts.json", {})
+
+
+def add_posts(posts, rows, found_by, *, parent=None, since=None):
+    index = {t.social_source_key(post): key for key, post in posts.items()}
+    added = 0
+    for row in rows or []:
+        if since and (row.get("published_on") or "") < since:
+            continue
+        key = t.social_source_key(row)
+        if key in index:
+            found = posts[index[key]].setdefault("found_by", [])
+            if found_by not in found:
+                found.append(found_by)
+            continue
+        post_id = f"P{len(posts) + 1:04d}"
+        posts[post_id] = {**row, "id": post_id, "found_by": [found_by], **({"parent": parent} if parent else {})}
+        index[key] = post_id
+        added += 1
+    return added
+
+
+def since_date(project):
+    state = read(project / "project.json")
+    return (date.fromisoformat(state["created"]) - timedelta(days=state["window_days"])).isoformat()
+
+
+def search(project, call, pages=1):
+    plan, posts, since = load_plan(project), load_posts(project), since_date(project)
+    days = read(project / "project.json")["window_days"]
+    limit = {"postedLimit": "week"} if days <= 7 else {"postedLimit": "month"} if days <= 31 else {}
+    empty = []
+    for query in plan["linkedin_queries"]:
+        for page in range(1, pages + 1):
+            rows = call(t.LINKEDIN, {"search": query, **limit, "sortBy": "date", "page": page}, t.linkedin_posts)
+            added = add_posts(posts, rows, query, since=since)
+            print(terminal_text(f"linkedin {len(rows or []):3d} found, {added:3d} new | {query}"), flush=True)
+            if page == 1 and not rows:
+                empty.append(query)
+            if len(rows or []) < 40:
+                break
+    for query in plan["x_queries"]:
+        rows = call(t.X, {"query": f"{query} since:{since} -filter:retweets", "queryType": "Latest", "limit": 20},
+                    t.x_posts)
+        added = add_posts(posts, rows, query, since=since)
+        print(terminal_text(f"x        {len(rows or []):3d} found, {added:3d} new | {query}"), flush=True)
+        if not rows:
+            empty.append(query)
+    t.atomic_json(project / "posts.json", posts)
+    if empty:
+        print(terminal_text(f"Note: {len(empty)} queries returned nothing. Loosen or replace them: " + "; ".join(empty)))
+    print(f"{len(posts)} posts captured. Run sheet to read them.")
+
+
+def author_key(post):
+    return post.get("profile") or post["author"].casefold()
+
+
+def score(post, terms):
+    """Order the reading sheet. A post in the author's own voice about a planned topic goes first."""
+    text = post["text"]
+    hits = sum(1 for term in terms if term.casefold() in text.casefold())
+    person = post["channel"] != "linkedin" or bool(post.get("profile"))
+    return (min(len(OWN.findall(text)), 4) * 3 + (min(hits, 3) * 4 if hits else -6)
+            - min(len(NOISE.findall(text)), 4) * 3 - (0 if person else 8) + min(len(text), 1500) / 1500)
+
+
+def excerpt(text, terms=(), size=900):
+    """Show the part that names a planned topic, starting at a sentence."""
+    if len(text) <= size + 150:
+        return " ".join(text.split())
+    low = text.casefold()
+    hits = [at for at in (low.find(term.casefold()) for term in terms) if at >= 0]
+    match = OWN.search(text)
+    anchor = min(hits) if hits else match.start() if match else 0
+    start = max(0, anchor - size // 3)
+    if start:
+        cut = max(text.rfind(mark, 0, start) for mark in (". ", "\n", "! ", "? "))
+        start = cut + 1 if cut >= 0 and start - cut < 200 else start
+    return ("… " if start else "") + " ".join(text[start:start + size].split()) + " …"
+
+
+def load_grades(project):
+    grades = read(project / "grades.json", {})
+    return {key: ({"verdict": value} if isinstance(value, str) else value) for key, value in grades.items()}
+
+
+def sheet(project, limit):
+    plan, posts, grades = load_plan(project), load_posts(project), load_grades(project)
+    terms = topic_terms(plan)
+    graded_authors = {author_key(posts[key]) for key in grades if key in posts}
+    same_text = lambda post: compact(post["text"])[:400]
+    rejected = {same_text(posts[key]) for key, grade in grades.items() if key in posts and grade.get("verdict") == "no"}
+    followup = lambda post: bool(post.get("parent")) or post.get("found_by", [""])[0].startswith("employer ")
+    seen_before = set(read(project / "previous.json", {}))
+    best, copies = {}, {}
+    for post in sorted(posts.values(), key=lambda p: (not followup(p), -score(p, terms))):
+        if post["id"] in grades or author_key(post) in graded_authors or same_text(post) in rejected:
+            continue
+        if post.get("profile") in seen_before:  # Shown in an earlier run: the reviewer has already seen them.
+            continue
+        if same_text(post) in copies:  # Reshares and staff posting one blurb are read once.
+            copies[same_text(post)].append(post["id"])
+            continue
+        if author_key(post) not in best:
+            best[author_key(post)] = post
+            copies[same_text(post)] = []
+    rows = list(best.values())
+    lines = [f"# Reading sheet — {min(limit, len(rows))} of {len(rows)} ungraded authors", "",
+             "Grade every row in grades.json. Use `show ID` for the full post and its parent.", ""]
+    for post in rows[:limit]:
+        parent = f" · reply to {post['parent']}" if post.get("parent") else ""
+        twins = copies[same_text(post)]
+        parent += f" · {len(twins)} identical posts by others, graded with this one if you say no" if twins else ""
+        lines += [f"## {post['id']} · {post['channel']} {post['kind']}{parent} · {post.get('published_on') or 'no date'}",
+                  f"**{post['author']}** — {post.get('headline') or 'no headline'}",
+                  f"Found by: {'; '.join(post.get('found_by', []))}", "", excerpt(post["text"], terms), ""]
+    save(project / "sheet.md", terminal_text("\n".join(lines)) + "\n")
+    print(f"Wrote {min(limit, len(rows))} posts to {project / 'sheet.md'}; {max(0, len(rows) - limit)} more ungraded authors remain.")
+
+
+def show(project, keys):
+    posts, jobs = load_posts(project), read(project / "jobs.json", {})
+    for key in keys:
+        item = posts.get(key) or jobs.get(key)
+        if not item:
+            raise ValueError(f"No post or job ad has the ID {key}.")
+        if item.get("parent") in posts:
+            parent = posts[item["parent"]]
+            print(terminal_text(f"--- parent {parent['id']} by {parent['author']}\n{parent['text']}\n"))
+        head = f"{item['company']} · {item['title']}" if key in jobs else f"{item['author']} — {item.get('headline', '')}"
+        print(terminal_text(f"--- {key} · {head}\n{item['url']}\n\n{item['text']}\n"))
+
+
+def check_grades(project):
+    posts, grades = load_posts(project), load_grades(project)
+    problems = []
+    for key, grade in grades.items():
+        post = posts.get(key)
+        if not post:
+            problems.append(f"{key}: no such post.")
+            continue
+        if not isinstance(grade, dict) or grade.get("verdict") not in VERDICTS:
+            problems.append(f"{key}: verdict must be one of {', '.join(sorted(VERDICTS))}.")
+            continue
+        if grade["verdict"] in QUOTED:
+            quote = norm(grade.get("quote"))
+            if len(quote) < 15 or quote not in norm(post["text"]):
+                problems.append(f"{key}: the quote must be at least 15 characters copied exactly from the post.")
+            if not norm(grade.get("why")):
+                problems.append(f"{key}: say why in one sentence.")
+        if grade["verdict"] == "prospect" and grade.get("fit") not in FITS:
+            problems.append(f"{key}: fit must be strong, look or low.")
+        if not isinstance(grade.get("labels", []), list):
+            problems.append(f"{key}: labels must be a list.")
+    if problems:
+        raise ValueError("Fix grades.json:\n  " + "\n  ".join(problems))
+    return posts, grades
+
+
+# Spider
+
+def spider(project, call, threads, x_threads, quote_pages, employers):
+    plan = load_plan(project)
+    posts, grades = check_grades(project)
+    done = read(project / "spider.json", {"threads": [], "employers": []})
+    since = since_date(project)
+    # Strong and look prospects first, then low ones and posts by customers and leavers: their threads draw peers.
+    seeds = [posts[key] for key, grade in grades.items()
+             if grade["verdict"] in QUOTED and not posts[key].get("parent") and key not in done["threads"]]
+    seeds.sort(key=lambda p: (FITS.index(grades[p["id"]].get("fit", "low")), p["id"]))
+    budget = {"linkedin": threads, "x": x_threads}
+    for seed in seeds:
+        if not budget[seed["channel"]]:
+            continue
+        budget[seed["channel"]] -= 1
+        if seed["channel"] == "linkedin":
+            rows = call(t.LINKEDIN_COMMENTS, {"post": seed["url"], "sortBy": "date", "page": 1}, t.linkedin_comments)
+        else:
+            rows = call(t.X_REPLIES, {"url": seed["url"], "limit": 20}, lambda data: t.x_posts(data, replies=True))
+            seed_id = seed["url"].rsplit("/", 1)[-1]
+            if quote_pages and t.X_QUOTES in call.available and seed_id.isdigit():
+                quote_pages -= 1
+                rows = (rows or []) + (call(t.X_QUOTES, {
+                    "id": seed_id, "max_results": t.X_QUOTE_PAGE,
+                    "tweet.fields": "author_id,created_at,referenced_tweets"},
+                    lambda data: t.x_quotes(data, seed_id)) or [])
+        mine = author_key(seed)
+        rows = [row for row in rows or [] if author_key(row) != mine]
+        added = add_posts(posts, rows, f"thread {seed['id']}", parent=seed["id"])
+        done["threads"].append(seed["id"])
+        print(terminal_text(f"thread {seed['id']} ({seed['channel']}): {len(rows)} replies, {added} new"), flush=True)
+    topic = plan["employer_topic"].strip()
+    people = read(project / "people.json", {})
+    companies = []
+    for key, person in people.items():
+        company = (person.get("verified") or {}).get("company")
+        # Only where the agent asked: a generic or one-person company name returns unrelated posts.
+        if (topic and company and grades.get(key, {}).get("follow_employer") is True
+                and compact(company) not in GENERIC_EMPLOYER and len(compact(company)) >= 3
+                and company not in companies and company not in done["employers"]
+                and not listed(company, plan["exclude_employers"])):
+            companies.append(company)
+    for company in companies[:employers]:
+        name = re.split(r"\s+[-–—|:]\s+", company)[0]  # "Acme - Voted software of the year" is a tagline.
+        rows = call(t.LINKEDIN, {"search": f'"{name}" "{topic}"', "sortBy": "date", "page": 1}, t.linkedin_posts)
+        known = {author_key(post) for post in posts.values()}
+        rows = [row for row in rows or [] if author_key(row) not in known]
+        added = add_posts(posts, rows, f"employer {company}", since=since)
+        done["employers"].append(company)
+        print(terminal_text(f"employer {company}: {len(rows)} posts from new authors, {added} in window"), flush=True)
+    t.atomic_json(project / "posts.json", posts)
+    t.atomic_json(project / "spider.json", done)
+    print("Run sheet again to read what the follow-ups found.")
+
+
+# Identity and roles
+
+def listed(company, names):
+    key = compact(job_board.ALIAS_ENDINGS.sub("", company or ""))
+    return bool(key) and any(key == compact(job_board.ALIAS_ENDINGS.sub("", name)) for name in names)
+
+
+def web_results(data):
+    return [{field: row.get(field) for field in ("link", "title", "snippet")} for row in data.get("organic") or []]
+
+
+def linkedin_result(hit):
+    """Search engines return country subdomains for the same LinkedIn profile."""
+    return t.linkedin_profile(re.sub(r"://[a-z]{2}\.linkedin", "://www.linkedin", (hit.get("link") or "").split("?")[0]))
+
+
+def slim_profile(data):
+    row = data.get("element") or {}
+    return {"element": {key: row.get(key) for key in
+                        ("firstName", "lastName", "headline", "linkedinUrl", "currentPosition", "experience")}}
+
+
+def current_role(data, profile):
+    """Accept concurrent roles and a role marked present, and say which rule applied."""
+    row = (data or {}).get("element") or {}
+    if t.linkedin_profile(row.get("linkedinUrl")) != profile:
+        return None
+    name = " ".join(filter(None, [row.get("firstName"), row.get("lastName")]))
+    if not name:
+        return None
+    roles = [r for r in row.get("currentPosition") or []
+             if r.get("position") and r.get("companyName") and not (r.get("endDate") or {}).get("year")]
+    basis = "current role" if len(roles) == 1 else f"{len(roles)} concurrent roles"
+    if not roles:
+        roles = [r for r in row.get("experience") or [] if r.get("position") and r.get("companyName")
+                 and str((r.get("endDate") or {}).get("text", "")).casefold() == "present"]
+        basis = "experience marked present"
+    if roles:
+        return {"name": name, "role": roles[0]["position"], "company": roles[0]["companyName"], "role_basis": basis,
+                "company_url": t.linkedin_url(roles[0].get("companyLinkedinUrl"), "company"),
+                "other_roles": [f"{r['position']}, {r['companyName']}" for r in roles[1:3]]}
+    if row.get("headline"):
+        return {"name": name, "role": row["headline"], "company": "", "role_basis": "headline only", "other_roles": []}
+    return None
+
+
+def same_name(left, right):
+    a, b = norm(left).casefold().split(), norm(right).casefold().split()
+    return bool(a and b) and a[0] == b[0] and a[-1] == b[-1]
+
+
+def x_identity(call, handle):
+    """Tie an X account to one LinkedIn profile: a link on the X profile, or the same name plus a shared company or handle."""
+    profile = call(t.X_PROFILE, {"handle": handle}, lambda data: {
+        key: ((data.get("output") or {}).get("data") or {}).get(key)
+        for key in ("handle", "displayName", "bio", "description", "website")}) or {}
+    name = norm(re.sub(r"[^\w\s'.-]", "", profile.get("displayName") or ""))
+    bio = " ".join(filter(None, [profile.get("bio"), profile.get("description")]))
+    links = t.linkedin_links([profile.get("website"), *re.findall(r"https://(?:www\.)?linkedin\.com/in/[\w%.-]+/?", bio)])
+    if len(links) == 1:
+        return name, links.pop(), "LinkedIn link on the X profile"
+    if len(name.split()) < 2 or not re.fullmatch(r"[^\W\d_]+(?:[ '.-][^\W\d_]+)+", name):
+        return name, None, "the X profile shows no full name"
+    site = re.sub(r"^https?://(?:www\.)?", "", profile.get("website") or "").split("/")[0].rsplit(".", 1)[0]
+    company = re.search(r"(?:@|\bat )\s*([A-Z][\w&-]*(?: [A-Z][\w&-]*){0,2})", bio)  # Stops at the sentence end.
+    company = company.group(1) if company else ""
+    hint = company or site or handle
+    anchors = {anchor for anchor in (compact(company), compact(site)) if len(anchor) >= 4}
+    hits = call(t.BUYER_WEB, {"q": f'"{name}" {hint} linkedin', "num": 10}, web_results) or []
+    matches = {}
+    for hit in hits:
+        found = linkedin_result(hit)
+        if not found or not norm(hit.get("title")).casefold().startswith(name.casefold()):
+            continue
+        shared = sorted(anchor for anchor in anchors if anchor in compact((hit.get("title") or "") + (hit.get("snippet") or "")))
+        if found.rsplit("/", 1)[-1] == handle.casefold():
+            shared.append("the same handle")
+        if shared:
+            matches[found] = shared
+    if len(matches) != 1:
+        return name, None, ("no LinkedIn profile shared the name and a company or handle" if not matches
+                            else "more than one LinkedIn profile shared the name and company")
+    found, shared = next(iter(matches.items()))
+    return name, found, "web search: same name and " + ", ".join(shared)
+
+
+def verify(project, call, limit, retry_held=False):
+    plan = load_plan(project)
+    posts, grades = check_grades(project)
+    people = read(project / "people.json", {})
+    todo = [key for key, grade in grades.items() if grade["verdict"] == "prospect"
+            and (key not in people or retry_held and not people[key]["verified"])]
+    todo.sort(key=lambda key: (FITS.index(grades[key]["fit"]), key))
+    for key in todo[:limit]:
+        post = posts[key]
+        entry = {"channel": post["channel"], "source_url": post["url"], "verified": None, "hold": None}
+        profile, x_name = post.get("profile"), None
+        if post["channel"] == "x":
+            if not post["author"].startswith("@"):
+                entry["hold"] = "A quote post's author has no handle to look up."
+            else:
+                x_name, profile, basis = x_identity(call, post["author"][1:])
+                entry.update(identity_basis=basis, x_name=x_name)
+                if not profile:
+                    entry["hold"] = f"No LinkedIn identity: {basis}."
+        elif not profile:
+            entry["hold"] = "The post has no personal LinkedIn profile."
+        if profile:
+            person = current_role(call(t.PROFILE, {"url": profile}, slim_profile), profile)
+            if not person:
+                entry["hold"] = "LinkedIn returned no name, role or headline for this profile."
+            elif x_name and not same_name(person["name"], x_name):
+                entry["hold"] = "The LinkedIn name does not match the X account."
+            elif listed(person["company"], plan["exclude_employers"]):
+                entry["hold"] = f"Works for an excluded employer ({person['company']})."
+            else:
+                entry.update(verified=person, profile_url=profile)
+        people[key] = entry
+        state = (f"{entry['verified']['role']}, {entry['verified']['company'] or 'no employer listed'}"
+                 if entry["verified"] else f"HELD: {entry['hold']}")
+        print(terminal_text(f"{key} {post['author']}: {state}"), flush=True)
+        t.atomic_json(project / "people.json", people)
+    if len(todo) > limit:
+        print(f"{len(todo) - limit} prospects are still unchecked. Run verify again.")
+
+
+# Job ads
+
+def jobs_search(project, call, per_query, lookback):
+    plan = load_plan(project)
+    if not plan["job_queries"]:
+        raise ValueError("plan.json has no job_queries.")
+    jobs = read(project / "jobs.json", {})
+    seen = {job["url"] for job in jobs.values()}
+    after = (date.fromisoformat(read(project / "project.json")["created"]) - timedelta(days=lookback)).isoformat()
+    sites = "(" + " OR ".join(f"site:{board}" for board in job_board.BUYER_BOARDS) + ")"
+    for query in plan["job_queries"]:
+        hits = []
+        for page in (1, 2):
+            found = call(t.BUYER_WEB, {"q": f"{query} {sites} after:{after}", "num": 10, "page": page}, web_results) or []
+            hits += found
+            if len(found) < 10:
+                break
+        kept = 0
+        for hit in hits:
+            url = job_board.posting_url(hit.get("link") or "")
+            if not url or url in seen or kept >= per_query:
+                continue
+            seen.add(url)
+            try:
+                company, title, posted, html = job_board.read_posting(url)
+                company = re.sub(r"^(?:[A-Z]{2})?\d{2,6}\s+", "", company).strip()  # Workday prefixes an entity code.
+                text = "\n".join(job_board.PostingHTML(unescape(html)).text_lines())  # Greenhouse escapes its HTML.
+            except Exception:  # A closed or unreadable ad is common and costs nothing.
+                continue
+            if posted and posted[:10] < after or listed(company, plan["exclude_employers"]) or len(text) < 200:
+                continue
+            job_id = f"J{len(jobs) + 1:03d}"
+            jobs[job_id] = {"id": job_id, "url": url, "company": company, "title": title,
+                            "published_on": posted[:10] if posted else None, "text": text, "found_by": [query]}
+            kept += 1
+        print(terminal_text(f"jobs {len(hits):3d} results, {kept:2d} readable ads | {query}"), flush=True)
+    t.atomic_json(project / "jobs.json", jobs)
+    print(f"{len(jobs)} ads captured.")
+    jobs_sheet(project, 15)
+
+
+def jobs_sheet(project, limit):
+    plan, jobs, graded = load_plan(project), read(project / "jobs.json", {}), read(project / "job-grades.json", {})
+    rows = [job for job in jobs.values() if job["id"] not in graded and not listed(job["company"], plan["exclude_employers"])]
+    terms = topic_terms(plan)
+    lines = [f"# Job ads — {min(limit, len(rows))} of {len(rows)} ungraded", "",
+             "Grade each in job-grades.json. Use `show ID` for the full ad.", ""]
+    for job in rows[:limit]:
+        known = " · NAMED CUSTOMER" if listed(job["company"], plan["customers"]) else ""
+        lines += [f"## {job['id']} · {job['company']}{known} · {job['title']} · {job['published_on'] or 'no date'}",
+                  job["url"], "", excerpt(job["text"], terms, 1100), ""]
+    save(project / "jobs-sheet.md", terminal_text("\n".join(lines)) + "\n")
+    print(f"Wrote {min(limit, len(rows))} ads to {project / 'jobs-sheet.md'}; {max(0, len(rows) - limit)} more ungraded ads remain.")
+
+
+def check_job_grades(project):
+    jobs, grades = read(project / "jobs.json", {}), read(project / "job-grades.json", {})
+    problems = []
+    for key, grade in grades.items():
+        grade = grades[key] = {"verdict": grade} if isinstance(grade, str) else grade
+        job = jobs.get(key)
+        if not job or not isinstance(grade, dict) or grade.get("verdict") not in JOB_VERDICTS:
+            problems.append(f"{key}: needs an existing job ID and a verdict of mandate, customer or no.")
+        elif grade["verdict"] == "mandate":
+            quote = norm(grade.get("quote"))
+            if len(quote) < 15 or quote not in norm(job["text"]):
+                problems.append(f"{key}: the quote must be copied exactly from the ad.")
+            titles = grade.get("owner_titles")
+            if not isinstance(titles, list) or not titles or not norm(grade.get("why")):
+                problems.append(f"{key}: add owner_titles and one sentence on why.")
+            if grade.setdefault("fit", "look") not in FITS or not isinstance(grade.get("labels", []), list):
+                problems.append(f"{key}: fit must be strong, look or low, and labels a list.")
+    if problems:
+        raise ValueError("Fix job-grades.json:\n  " + "\n  ".join(problems))
+    return jobs, grades
+
+
+ENTITY_WORDS = {"group", "holdings", "investments", "technologies", "technology", "software", "labs", "systems",
+                "solutions", "international", "global", "gmbh", "srl", "sa", "ag", "bv", "pty", "co", "company", "hq"}
+
+
+def same_employer(left, right):
+    """Match a brand to its legal name ("LIQID", "LIQID Investments GmbH") but not to a namesake ("Litmus", "Litmus7")."""
+    def words(name):
+        name = re.split(r"\s+[-–—|:]\s+", name)[0]  # LinkedIn company names can carry a tagline.
+        return re.findall(r"[a-z0-9]+", job_board.ALIAS_ENDINGS.sub("", name.casefold()))
+
+    a, b = sorted((words(left), words(right)), key=len)
+    return bool(a) and b[:len(a)] == a and all(word in ENTITY_WORDS for word in b[len(a):])
+
+
+def owner_match(role, titles):
+    """Return how a current role relates to the titles the agent named for this ad."""
+    words = job_board.role_words(role)
+    function = words - job_board.ROLE_LEVEL
+    wanted = [want for title in titles if (want := job_board.role_words(title) - job_board.ROLE_LEVEL)]
+    # "VP Operations" must not match "Head of People Operations": a one-word title has to be the whole function.
+    if any(want <= words and (len(want) > 1 or function <= set().union(*wanted)) for want in wanted):
+        return "named owner title"
+    if any(len(want & function) >= 2 for want in wanted):
+        return "same function as the named owner"
+    if {word.replace("-", "") for word in re.findall(r"[\w-]+", role.casefold())} & OWNERS:
+        return "company leader, not the named owner"
+    return None
+
+
+def brand(company):
+    """The name people put on a profile: "Wiz, Inc." is "Wiz"."""
+    return " ".join(re.sub(r"[,.]+(?=\s|$)", " ", job_board.ALIAS_ENDINGS.sub("", company)).split())
+
+
+def indexed_people(data, company):
+    """Read a people search: each profile with the titles it lists as current at this employer."""
+    found = []
+    for row in data.get("results") or []:
+        profile = linkedin_result({"link": row.get("url")}) if isinstance(row, dict) else None
+        if not profile or any(person["profile"] == profile for person in found):
+            continue
+        current = [work for entity in row.get("entities") or [] if isinstance(entity, dict)
+                   for work in (entity.get("properties") or {}).get("workHistory") or []
+                   if isinstance(work, dict) and not (work.get("dates") or {}).get("to")]
+        found.append({"profile": profile, "text": row.get("title") or "", "titles": [
+            work.get("title") or "" for work in current
+            if same_employer((work.get("company") or {}).get("name") or "", company)]})
+    return found
+
+
+OWNER_RANK = {"named owner title": 0, "same function as the named owner": 1, "company leader, not the named owner": 2}
+
+
+def seniority(role):
+    """0 for executives and heads, 1 for directors, 2 for managers and leads, 3 for everyone else."""
+    words = set(re.findall(r"[a-z]+", role.casefold()))
+    if words & {"chief", "ceo", "coo", "cro", "cco", "founder", "cofounder", "president", "vp", "svp", "evp", "vice", "head"}:
+        return 0
+    return 1 if "director" in words else 2 if words & {"manager", "lead", "principal"} else 3
+
+
+def owner_candidates(call, job, titles, why):
+    """Find likely owners from an indexed people search and a web search of LinkedIn, most senior match first."""
+    name = brand(job["company"])
+    mention = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)", re.I)
+    ranked = {}
+
+    def consider(profile, role_text, unknown):
+        match = owner_match(role_text, titles)
+        order = (OWNER_RANK[match], seniority(role_text)) if match else unknown
+        if order and (profile not in ranked or order < ranked[profile]):
+            ranked[profile] = order
+
+    people = call(t.SEMANTIC_PEOPLE, {
+        "query": f"Current {', '.join(titles[:4])} at {name}. {why}"[:400], "category": "people", "numResults": 10,
+        "includeDomains": ["linkedin.com"]}, lambda data: indexed_people(data, job["company"])) or []
+    for person in people:
+        for title in person["titles"]:
+            consider(person["profile"], title, None)
+        if not person["titles"] and mention.search(person["text"]):
+            consider(person["profile"], person["text"], (3, 3))  # No indexed history: the profile check decides.
+    hits = call(t.BUYER_WEB, {"q": job_board.owner_search_query(name, titles), "num": 10}, web_results) or []
+    for hit in hits:
+        profile, text = linkedin_result(hit), (hit.get("title") or "") + " " + (hit.get("snippet") or "")
+        if profile and mention.search(text):
+            consider(profile, hit.get("title") or "", (4, 3))
+    return sorted(ranked, key=ranked.get)
+
+
+def job_contacts(project, call, per_job):
+    jobs, grades = check_job_grades(project)
+    people = read(project / "people.json", {})
+    seen_before = set(read(project / "previous.json", {}))
+    for key, grade in grades.items():
+        if grade["verdict"] != "mandate":
+            people.pop(key, None)
+            continue
+        job, titles = jobs[key], grade["owner_titles"]
+        entry = {"channel": "jobs", "source_url": job["url"], "verified": None,
+                 "hold": "No current owner was found for this ad."}
+        # Someone already verified at this employer is better evidence than a search result.
+        known = [(other["profile_url"], other["verified"]) for name, other in people.items()
+                 if name != key and other.get("channel") != "jobs" and other.get("verified")
+                 and same_employer(other["verified"]["company"], job["company"])
+                 and owner_match(other["verified"]["role"], titles)]
+        candidates = known or [(profile, None) for profile in owner_candidates(call, job, titles, grade["why"])]
+        fresh = [(profile, person) for profile, person in candidates if profile not in seen_before]
+        repeat = len(candidates) > len(fresh) and not fresh
+        candidates = fresh[:per_job]
+        best = None
+        for profile, person in candidates:
+            person = person or current_role(call(t.PROFILE, {"url": profile}, slim_profile), profile)
+            if not person or not same_employer(person["company"], job["company"]):
+                continue
+            match = owner_match(person["role"], titles)
+            order = (OWNER_RANK[match], seniority(person["role"])) if match else None
+            if order and (best is None or order < best[3]):
+                best = (profile, person, match, order)
+            if best and best[3] <= (0, min(seniority(title) for title in titles)):
+                break  # Holds a named title at the level asked for. Further lookups would only cost money.
+        if best:
+            junior = best[3][1] > min(seniority(title) for title in titles)
+            entry.update(verified=best[1], profile_url=best[0], hold=None,
+                         identity_basis=best[2] + ("; more junior than the titles named" if junior else ""))
+        elif repeat:
+            entry["hold"] = "The owner of this work was already shown in an earlier run."
+        elif candidates:
+            entry["hold"] = f"No current owner was found: {len(candidates)} candidates checked, none holds the role at this employer."
+        people[key] = entry
+        state = (f"{entry['verified']['name']}, {entry['verified']['role']} ({entry['identity_basis']})" if best
+                 else f"HELD: {entry['hold']}")
+        print(terminal_text(f"{key} {job['company']}: {state}"), flush=True)
+        t.atomic_json(project / "people.json", people)
+
+
+# Work email
+
+def company_site(data, company_url):
+    company = data.get("element") or {}
+    if t.linkedin_url(company.get("linkedinUrl"), "company") != company_url or not isinstance(company.get("website"), str):
+        return None
+    try:
+        return {"name": company.get("name") or "",
+                "url": public_url(re.sub(r"^http://", "https://", company["website"].strip(), flags=re.I))}
+    except ValueError:
+        return None
+
+
+def work_address(data, profile, domain):
+    """Accept one personal address at the employer's own domain."""
+    output = data.get("output") or {}
+    result = output.get("data") or {}
+    if not output.get("found") or t.linkedin_profile(result.get("linkedinUrl")) != profile:
+        return None
+    addresses = set()
+    for row in result.get("emails") or []:
+        address = (row.get("email") or "").strip().casefold()
+        local, _, host = address.rpartition("@")
+        if (host == domain and re.fullmatch(r"[a-z0-9._+%-]+", local)
+                and local not in {"hello", "info", "contact", "sales", "support", "admin", "team", "careers", "office"}):
+            addresses.add(address)
+    return next(iter(addresses)) if len(addresses) == 1 else None
+
+
+def mailbox_verified(data, address):
+    record = data.get("data") or {}
+    return ((record.get("email") or "").casefold() == address and record.get("status") == "valid"
+            and record.get("accept_all") is False and record.get("webmail") is False)
+
+
+def work_email(call, profile, person):
+    """Find an address at the current employer's domain, then confirm the mailbox with a second provider."""
+    company_url = person.get("company_url")
+    if not company_url:
+        role = current_role(call(t.PROFILE, {"url": profile}, slim_profile), profile) or {}
+        company_url = role.get("company_url") if same_employer(role.get("company") or "", person["company"]) else None
+    if not company_url or compact(person["company"]) in GENERIC_EMPLOYER:
+        return {"status": "employer has no LinkedIn page to confirm a domain"}
+    site = call(t.COMPANY, {"url": company_url}, lambda data: company_site(data, company_url))
+    if not site or not same_employer(site["name"], person["company"]):
+        return {"status": "employer website not confirmed"}
+    domain = urlsplit(site["url"]).hostname.removeprefix("www.")
+    address = call(t.WORK_EMAIL, {"profileUrl": profile}, lambda data: work_address(data, profile, domain))
+    if not address:
+        return {"status": "no address found at the employer's domain"}
+    if not call(t.VERIFY_EMAIL, {"email": address}, lambda data: mailbox_verified(data, address)):
+        return {"status": "address found but the mailbox was not verified"}
+    return {"status": "verified", "address": address}
+
+
+def enrich(project, call, limit):
+    """Look up work email for the people you said yes to, or everyone worth contacting if nothing is reviewed yet."""
+    rows, *_ = shortlist_rows(project)
+    people = read(project / "people.json", {})
+    chosen = [row for row in rows if row["your_answer"] == "yes"] or [row for row in rows if row["fit"] != "low" and not row["your_answer"]]
+    todo = [row for row in chosen if people[row["key"]].get("work_email", {}).get("status") != "verified"][:limit]
+    for row in todo:
+        entry = people[row["key"]]
+        entry["work_email"] = work_email(call, entry["profile_url"], entry["verified"])
+        print(terminal_text(f"{row['name']}: {entry['work_email'].get('address') or entry['work_email']['status']}"), flush=True)
+        t.atomic_json(project / "people.json", people)
+    found = sum(people[row["key"]].get("work_email", {}).get("status") == "verified" for row in chosen)
+    print(f"{found} of {len(chosen)} people have a verified work email. Run shortlist to add them to the CSV.")
+
+
+# Shortlist
+
+def csv_value(value):
+    value = str(value or "")
+    return "'" + value if value.lstrip().startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")) else value
+
+
+def shortlist_rows(project):
+    """One row per verified person, with the company's own customers and unresolved people set apart."""
+    plan = load_plan(project)
+    posts, grades = check_grades(project)
+    jobs, job_grades = check_job_grades(project)
+    people = read(project / "people.json", {})
+    seen_before, votes = read(project / "previous.json", {}), read(project / "review.json", {})
+    rows, customers, held, repeats = {}, [], [], []
+    order = sorted(people, key=lambda key: (FITS.index((grades.get(key) or job_grades.get(key, {})).get("fit", "look")), key))
+    for key in order:
+        entry, source = people[key], posts.get(key) or jobs[key]
+        grade = grades.get(key) or job_grades.get(key, {})
+        if grade.get("verdict") not in {"prospect", "mandate"}:
+            continue  # Regraded after verification: the new verdict decides where they appear.
+        name = source.get("author") or source.get("company")
+        if not entry["verified"]:
+            held.append({"name": name, "reason": entry["hold"], "url": source["url"], "job": key in jobs,
+                         "x_name": entry.get("x_name")})
+            continue
+        person = entry["verified"]
+        if listed(person["company"], plan["customers"]):
+            customers.append((f"{person['name']}, {person['company']}", source["url"], "Works at a customer named on the company's site."))
+            continue
+        if entry["profile_url"] in rows:
+            rows[entry["profile_url"]]["other_sources"].append(source["url"])
+            continue
+        if entry["profile_url"] in seen_before:
+            earlier = seen_before[entry["profile_url"]].get("vote")
+            repeats.append((f"{person['name']}, {person['company']}", source["url"],
+                            f"You said {earlier} last time." if earlier else "Shown last time, not answered."))
+            continue
+        labels = list(grade.get("labels", []))
+        if person["role_basis"] != "current role":
+            labels.append(f"role from {person['role_basis']}")
+        headline = source.get("headline") or ""
+        if (key in posts and person["company"] and headline and compact(person["company"]) not in compact(headline)
+                and not any("employer" in label for label in labels)):
+            labels.append("current employer not in the post's headline")
+        if key in jobs and entry.get("identity_basis") != "named owner title":
+            labels.append(entry["identity_basis"])
+        if key in jobs and len(compact(brand(jobs[key]["company"]))) <= 5:
+            labels.append("short company name: confirm it is the same employer")
+        rows[entry["profile_url"]] = {
+            "fit": grade.get("fit", "look"), "kind": "hiring signal" if key in jobs else "firsthand post",
+            "name": person["name"], "role": person["role"], "company": person["company"],
+            "profile_url": entry["profile_url"], "role_basis": person["role_basis"],
+            "identity_basis": entry.get("identity_basis", "author of the LinkedIn post"),
+            "channel": entry["channel"], "source_url": source["url"], "published_on": source.get("published_on") or "",
+            "quote": norm(grade["quote"]), "why": norm(grade["why"]), "labels": labels, "other_sources": [],
+            "your_answer": votes.get(entry["profile_url"], {}).get("vote") or "",
+            "your_note": votes.get(entry["profile_url"], {}).get("note") or "",
+            "work_email": entry.get("work_email", {}).get("address", ""),
+            "work_email_status": entry.get("work_email", {}).get("status", ""), "key": key}
+    rows = sorted(rows.values(), key=lambda row: (FITS.index(row["fit"]), row["kind"], row["name"]))
+    by_company = {}
+    for row in rows:
+        by_company.setdefault(job_board.company_key(row["company"]), []).append(row)
+    for group in by_company.values():
+        if len(group) > 1 and group[0]["company"]:
+            for row in group:
+                row["labels"].append("same employer as " + ", ".join(o["name"] for o in group if o is not row))
+    for item in held:  # A held X post may belong to someone already verified from LinkedIn.
+        twin = next((row for row in rows if item["x_name"] and same_name(row["name"], item["x_name"])), None)
+        if twin:
+            item["reason"] += f" Possibly the same person as {twin['name']} on the shortlist."
+    return rows, customers, held, posts, grades, jobs, job_grades, repeats
+
+
+def shortlist(project):
+    rows, customers, held, posts, grades, jobs, job_grades, repeats = shortlist_rows(project)
+    sheet_file = io.StringIO(newline="")
+    writer = csv.DictWriter(sheet_file, CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows({key: csv_value("; ".join(value) if isinstance(value, list) else value)
+                      for key, value in row.items()} for row in rows)
+    save(project / "shortlist.csv", sheet_file.getvalue())
+    cell = lambda text: terminal_text(str(text)).replace("|", "\\|")
+
+    def table(found):
+        lines = ["| # | Fit | Person | Current role | Evidence | Why | Labels |", "|---|---|---|---|---|---|---|"]
+        for number, row in enumerate(found, 1):
+            role = f"{row['role']}, {row['company']}" if row["company"] else row["role"]
+            more = "".join(f" ([also]({url}))" for url in row["other_sources"])
+            answer = f" · you said {row['your_answer']}" if row["your_answer"] else ""
+            email = f"<br>{cell(row['work_email'])}" if row["work_email"] else ""
+            lines.append(f"| {number} | {row['fit']} · {row['kind']}{answer} | [{cell(row['name'])}]({row['profile_url']}){email} | {cell(role)} | "
+                         f"“{cell(row['quote'])}” ([source]({row['source_url']})){more} | {cell(row['why'])} | "
+                         f"{cell('; '.join(row['labels']))} |")
+        return lines
+
+    def authors(verdict):
+        found = {}
+        for key, grade in grades.items():
+            if grade["verdict"] == verdict:
+                found.setdefault(author_key(posts[key]), (posts[key]["author"], posts[key]["url"], norm(grade.get("why"))))
+        return list(found.values())
+
+    contact = [row for row in rows if row["fit"] != "low"]
+    low = [row for row in rows if row["fit"] == "low"]
+    customers = authors("customer") + customers + [
+        (jobs[key]["company"], jobs[key]["url"], norm(grade.get("why")) or "Job ad from an existing customer.")
+        for key, grade in job_grades.items() if grade["verdict"] == "customer"]
+    lines = ["# Shortlist", "", " · ".join(f"{label}: {value}" for label, value in funnel(project).items()), "",
+             f"## Worth contacting ({len(contact)})", "", *table(contact)]
+    if low:
+        lines += ["", f"## Low fit ({len(low)})", "", "Verified, with real evidence, but a weak match for this product.", "", *table(low)]
+    sections = (("Already customers", customers), ("Left the product", authors("churned")),
+                ("Built their own instead", authors("built_own")), ("Borderline, not checked", authors("borderline")),
+                ("Seen in an earlier run", repeats))
+    for title, found in sections:
+        if found:
+            lines += ["", f"## {title} ({len(found)})", ""] + [
+                f"- [{cell(name)}]({url})" + (f": {cell(why)}" if why else "") for name, url, why in found]
+    for title, found in (("Held people", [item for item in held if not item["job"]]),
+                         ("Job ads with no owner found", [item for item in held if item["job"]])):
+        if found:
+            lines += ["", f"## {title} ({len(found)})", ""] + [
+                f"- [{cell(item['name'])}]({item['url']}): {cell(item['reason'])}" for item in found]
+    save(project / "shortlist.md", "\n".join(lines) + "\n")
+    print(f"{len(contact)} worth contacting ({sum(row['fit'] == 'strong' for row in rows)} strong), {len(low)} low fit, "
+          f"{sum(not item['job'] for item in held)} held, {sum(item['job'] for item in held)} job ads with no owner. "
+          f"Open {project / 'shortlist.md'}.")
+
+
+def funnel(project):
+    posts, grades = load_posts(project), load_grades(project)
+    jobs, job_grades = read(project / "jobs.json", {}), read(project / "job-grades.json", {})
+    people = read(project / "people.json", {})
+    spent, calls, pending = spend(project)
+    verdict = lambda name: sum(grade.get("verdict") == name for grade in grades.values())
+    job_verdict = lambda name: sum((g if isinstance(g, str) else g.get("verdict")) == name for g in job_grades.values())
+    counts = {
+        "Posts captured": len(posts), "Authors": len({author_key(post) for post in posts.values()}),
+        "Authors graded": len({author_key(posts[key]) for key in grades if key in posts}),
+        "Prospects": verdict("prospect"), "Customers": verdict("customer"), "Left the product": verdict("churned"),
+        "Built their own": verdict("built_own"), "Borderline": verdict("borderline"),
+        "Job ads read": len(jobs), "Job mandates": job_verdict("mandate"),
+    }
+    try:
+        rows, _, held, *_ = shortlist_rows(project)
+        counts.update({
+            "Worth contacting": sum(row["fit"] != "low" for row in rows),
+            "Strong": sum(row["fit"] == "strong" for row in rows),
+            "Low fit": sum(row["fit"] == "low" for row in rows),
+            "Held people": sum(not item["job"] for item in held),
+            "Job ads with no owner": sum(item["job"] for item in held)})
+    except ValueError:
+        counts["Verified people"] = sum(bool(entry["verified"]) for entry in people.values())
+    counts["Spend"] = f"US${t.dollars(spent)} over {calls} calls" + (f", {pending} pending" if pending else "")
+    return counts
+
+
+def main(argv=None):
+    cli = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    cli.add_argument("--project", type=Path, required=True, help="private folder for this run, outside the repository")
+    commands = cli.add_subparsers(dest="command", required=True)
+    begin = commands.add_parser("start", help="read the company site and create the project")
+    begin.add_argument("url")
+    begin.add_argument("--budget-usd", default="1.00")
+    begin.add_argument("--window-days", type=int, default=45)
+    begin.add_argument("--previous", type=Path, help="an earlier run folder: skip its people and learn from your answers")
+    commands.add_parser("check", help="validate plan.json, grades.json and job-grades.json")
+    find = commands.add_parser("search", help="run the planned LinkedIn and X searches")
+    find.add_argument("--pages", type=int, default=1, choices=(1, 2, 3))
+    page = commands.add_parser("sheet", help="write the next reading sheet of ungraded posts, or job ads with --jobs")
+    page.add_argument("--limit", type=int)
+    page.add_argument("--jobs", action="store_true")
+    one = commands.add_parser("show", help="print posts or job ads in full")
+    one.add_argument("id", nargs="+")
+    follow = commands.add_parser("spider", help="open threads on graded posts and search the employers you marked")
+    follow.add_argument("--threads", type=int, default=12)
+    follow.add_argument("--x-threads", type=int, default=8)
+    follow.add_argument("--quote-pages", type=int, default=2)
+    follow.add_argument("--employers", type=int, default=8)
+    roles = commands.add_parser("verify", help="resolve identity and current role for graded prospects")
+    roles.add_argument("--limit", type=int, default=80)
+    roles.add_argument("--retry-held", action="store_true", help="try held people again; lookups already paid for are reused")
+    ads = commands.add_parser("jobs", help="search employer job ads and write the first job sheet")
+    ads.add_argument("--per-query", type=int, default=8)
+    ads.add_argument("--lookback-days", type=int, default=90)
+    owners = commands.add_parser("contacts", help="find and verify a current owner for each graded job mandate")
+    owners.add_argument("--per-job", type=int, default=4)
+    commands.add_parser("shortlist", help="write shortlist.md and shortlist.csv")
+    answers = commands.add_parser("review", help="open a local page to say yes or no to each person")
+    answers.add_argument("--port", type=int, default=8765)
+    emails = commands.add_parser("enrich", help="find and verify work email for the people you said yes to")
+    emails.add_argument("--limit", type=int, default=25)
+    commands.add_parser("status", help="show the funnel and spend")
+    args = cli.parse_args(argv)
+    project = args.project
+    try:
+        if args.command == "start":
+            return start(project, args.url, args.budget_usd, args.window_days, args.previous)
+        if not (project / "project.json").exists():
+            raise ValueError(f"{project} is not a run folder. Use start first.")
+        lock_down(project)
+        if args.command == "check":
+            for note in plan_notes(load_plan(project), (project / "posts.json").exists()):
+                print("Note:", note)
+            check_grades(project)
+            check_job_grades(project)
+            print("plan.json, grades.json and job-grades.json are valid.")
+        elif args.command == "sheet":
+            jobs_sheet(project, args.limit or 15) if args.jobs else sheet(project, args.limit or 60)
+        elif args.command == "show":
+            show(project, args.id)
+        elif args.command == "shortlist":
+            shortlist(project)
+        elif args.command == "review":
+            import review_page
+            review_page.serve(project, args.port)
+        elif args.command == "status":
+            for label, value in funnel(project).items():
+                print(f"{label}: {value}")
+        else:
+            with ledger(project) as call:
+                if args.command == "search":
+                    search(project, call, args.pages)
+                elif args.command == "spider":
+                    spider(project, call, args.threads, args.x_threads, args.quote_pages, args.employers)
+                elif args.command == "verify":
+                    verify(project, call, args.limit, args.retry_held)
+                elif args.command == "jobs":
+                    jobs_search(project, call, args.per_query, args.lookback_days)
+                elif args.command == "contacts":
+                    job_contacts(project, call, args.per_job)
+                elif args.command == "enrich":
+                    enrich(project, call, args.limit)
+    except (ValueError, OSError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        lock_down(project)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

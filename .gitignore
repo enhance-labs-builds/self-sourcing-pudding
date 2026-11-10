@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+/.venv/
+/runs/
+.DS_Store
+.env
+.env.*
+treg-config.json

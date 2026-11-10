@@ -391,14 +391,21 @@ def x_posts(data, *, replies=False):
         post_id = str(row.get("id", ""))
         if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle) or not post_id.isdigit() or not row.get("text"):
             continue
-        stamp = row.get("createdUtc")
+        stamp, followers = row.get("createdUtc"), row.get("authorFollowers")
+        name = " ".join(str(row.get("authorName") or "").split())[:80]
         output.append({
             "channel": "x", "kind": "reply" if replies or row.get("isReply") is True else "post",
             "author": f"@{handle}", "url": f"https://x.com/{handle}/status/{post_id}",
             "text": row["text"], "published_on": datetime.fromtimestamp(stamp, timezone.utc).date().isoformat() if stamp else None,
-            "profile": None, "headline": "",
+            "profile": None, "name": name,
+            "headline": " · ".join(filter(None, [name, f"{followers:,} followers" if isinstance(followers, int) else ""])),
         })
     return output
+
+
+def x_page(data):
+    """One page of an X search, with the cursor that fetches the next."""
+    return {"posts": x_posts(data), "next": ((data.get("output") or {}).get("data") or {}).get("nextCursor")}
 
 
 def x_quotes(data, seed_id):

@@ -18,7 +18,7 @@ PLAN = {
     "exclude_employers": ["Orbit CRM Inc"], "customers": ["Plum Labs"], "employer_topic": "CRM",
     "owner_titles": ["Head of Revenue Operations"], "seller_terms": ["CRM consultancy", "CRM implementation"],
     "linkedin_queries": [f'"Tool{n}" "we switched"' for n in range(19)] + ['"Tool1" "our renewal"'],
-    "x_queries": [f'"Tool{n}" ("we switched" OR "our team")' for n in range(8)], "job_queries": ["revops crm"],
+    "x_queries": [f'"Tool{n}" ("we switched" OR "our team")' for n in range(12)], "job_queries": ["revops crm"],
 }
 POST = {"channel": "linkedin", "kind": "post", "author": "Ada Example", "headline": "Founder at Fig",
         "url": "https://www.linkedin.com/posts/ada_activity-7000000000000000001-abcd",
@@ -39,6 +39,15 @@ class AgentRunTest(unittest.TestCase):
         t.atomic_json(self.project / "project.json", {
             "url": "https://example.com/", "budget_micro": 1_000_000, "window_days": 45, "created": "2026-11-10"})
         t.atomic_json(self.project / "plan.json", PLAN)
+        self.pages = {}  # No test touches the network: a website is whatever the test put here.
+        real = pudding.fetch_page
+        pudding.fetch_page = self.fetch
+        self.addCleanup(setattr, pudding, "fetch_page", real)
+
+    def fetch(self, url):
+        if url not in self.pages:
+            raise ValueError("Could not read the page.")
+        return url, self.pages[url]
 
     def write(self, name, value):
         t.atomic_json(self.project / name, value)
@@ -121,34 +130,163 @@ class AgentRunTest(unittest.TestCase):
         self.assertIsNone(pudding.current_role(profile([], headline=""), url))
 
     def test_x_identity_needs_the_same_name_and_company(self):
-        def caller(account, hits):
+        def find(account, hits):
             def call(endpoint, params, transform):
                 if endpoint == t.X_PROFILE:
                     return transform({"output": {"data": account}})
                 return transform({"organic": hits})
-            return call
+            return pudding.x_candidate(call, pudding.x_account(call, account["handle"]))[:2]
 
         account = {"handle": "ada", "displayName": "Ada Example 🚀", "bio": "Founder @ Fig Labs", "website": "https://figlabs.io"}
         right = {"link": "https://uk.linkedin.com/in/ada", "title": "Ada Example - Founder at Fig Labs", "snippet": ""}
         namesake = {"link": "https://www.linkedin.com/in/ada-2", "title": "Ada Example - Nurse", "snippet": "City Hospital"}
-        name, found, basis = pudding.x_identity(caller(account, [namesake, right]), "ada")
-        self.assertEqual((name, found), ("Ada Example", "https://www.linkedin.com/in/ada"))
+        found, basis = find(account, [namesake, right])
+        self.assertEqual(found, "https://www.linkedin.com/in/ada")
         self.assertIn("figlabs", basis)
-        self.assertIsNone(pudding.x_identity(caller(account, [namesake]), "ada")[1])
+        self.assertIsNone(find(account, [namesake])[0])
         twin = {**right, "link": "https://www.linkedin.com/in/ada-3"}
-        self.assertIsNone(pudding.x_identity(caller(account, [right, twin]), "ada")[1])
-        self.assertIsNone(pudding.x_identity(caller({**account, "displayName": "ada⚜️"}, [right]), "ada")[1])
+        self.assertIsNone(find(account, [right, twin])[0])
         linked = {**account, "bio": "Founder. https://www.linkedin.com/in/ada-direct"}
-        self.assertEqual(pudding.x_identity(caller(linked, []), "ada")[1:],
-                         ("https://www.linkedin.com/in/ada-direct", "LinkedIn link on the X profile"))
+        self.assertEqual(find(linked, []), ("https://www.linkedin.com/in/ada-direct", "LinkedIn link on the X profile"))
+        lower = {**account, "displayName": "Ada", "handle": "shipfast", "bio": "building @figlabs, prev eng @PearHQ", "website": ""}
+        self.assertEqual(find(lower, [{**right, "link": "https://www.linkedin.com/in/a-e"}])[1], "web search: same first name and figlabs")
         sentence = {**account, "bio": "CRO at Fig Labs. Before that, Pear.", "website": ""}
-        self.assertEqual(pudding.x_identity(caller(sentence, [namesake, right]), "ada")[1], "https://www.linkedin.com/in/ada")
-        bare = {"handle": "ada", "displayName": "Ada Example", "bio": "Posting about infra.", "website": None}
+        self.assertEqual(find(sentence, [namesake, right])[0], "https://www.linkedin.com/in/ada")
+        bare = {"handle": "Ada", "displayName": "Ada Example", "bio": "Posting about infra.", "website": None}
         own_slug = {**namesake, "link": "https://www.linkedin.com/in/ada"}
-        self.assertEqual(pudding.x_identity(caller(bare, [own_slug]), "Ada")[2], "web search: same name and the same handle")
-        self.assertIsNone(pudding.x_identity(caller(bare, [namesake]), "ada")[1])
+        self.assertEqual(find(bare, [own_slug])[1], "web search: same name and the same handle")
+        self.assertIsNone(find(bare, [namesake])[0])
         self.assertTrue(pudding.same_name("Ada Example", "ada  example"))
         self.assertFalse(pudding.same_name("Ada Example", "Ada Sample"))
+        # A display name that is only a handle is still followed: the profile with the same handle at the company in the bio.
+        alias = {**account, "displayName": "ada⚜️", "website": ""}
+        self.assertEqual(find(alias, [right]), ("https://www.linkedin.com/in/ada", "web search: same first name and figlabs, the same handle"))
+        other = {"link": "https://www.linkedin.com/in/grace", "title": "Grace Hopper - Engineer at Fig Labs", "snippet": ""}
+        self.assertIsNone(find(alias, [other])[0])
+        # A first name plus the company in the bio, a handle written with a hyphen, and a profile that lists the X account.
+        first = {**account, "displayName": "Ada", "handle": "shipfast", "website": ""}
+        self.assertEqual(find(first, [namesake, {**right, "link": "https://www.linkedin.com/in/a-e"}]),
+                         ("https://www.linkedin.com/in/a-e", "web search: same first name and figlabs"))
+        hyphen = {**alias, "handle": "adaexample"}
+        self.assertEqual(find(hyphen, [{**right, "link": "https://www.linkedin.com/in/ada-example"}])[0], "https://www.linkedin.com/in/ada-example")
+        listed = {**namesake, "snippet": "Websites. Other: https://twitter.com/shipfast."}
+        self.assertEqual(find({**bare, "handle": "shipfast", "displayName": "🚢"}, [listed]),
+                         ("https://www.linkedin.com/in/ada-2", "web search: their LinkedIn profile links this X account"))
+        self.assertIsNone(find({**bare, "handle": "ship", "displayName": "🚢"}, [listed])[0])
+        # Their own website often carries the link the X profile lacks.
+        self.pages["https://figlabs.io/"] = '<title>Fig Labs</title><a href="https://www.linkedin.com/in/ada-site/">Ada</a> Ada Example, founder.'
+        self.assertEqual(find(account, []), ("https://www.linkedin.com/in/ada-site", "LinkedIn link on their website"))
+
+    def test_an_x_author_is_confirmed_by_what_the_profile_shares_with_the_account(self):
+        person = lambda name, company: {"name": name, "first_name": name.split()[0], "last_name": name.split()[-1], "company": company}
+        account = {"handle": "ada_builds", "name": "ada", "bio": "building @FigLabs", "website": "https://figlabs.io", "site": "",
+                   "site_text": ""}
+        who, where = pudding.x_ties(person("Ada Example", "Fig Labs, Inc."), None, account, "https://www.linkedin.com/in/ada-example")
+        self.assertEqual((who, where), (["a name that fits the account"], ["Fig Labs named on the X profile or its website"]))
+        self.assertTrue(pudding.x_confirmed("named by the agent", who, where, account))
+        # A colleague at the same company shares the employer and nothing about the person.
+        who, where = pudding.x_ties(person("Grace Hopper", "Fig Labs"), None, account, "https://www.linkedin.com/in/grace")
+        self.assertEqual((who, bool(where)), ([], True))
+        self.assertFalse(pudding.x_confirmed("named by the agent", who, where, account))
+        # A namesake shares the name and nothing else.
+        named = {**account, "name": "Ada Example", "bio": "posting about infra", "website": ""}
+        who, where = pudding.x_ties(person("Ada Example", "City Hospital"), None, named, "https://www.linkedin.com/in/ada-2")
+        self.assertFalse(pudding.x_confirmed("web search: same name", who, where, named))
+        # Their name on the website the account links to, plus that site being the employer's own.
+        site = {**account, "name": "", "handle": "shipfast", "bio": "", "site": "https://figlabs.io/",
+                "site_text": "Fig Labs was founded by Ada Example in 2024."}
+        who, where = pudding.x_ties(person("Ada Example", "Figgy"), {"url": "https://www.figlabs.io/"}, site, "https://www.linkedin.com/in/ae")
+        self.assertEqual((who, where), (["their full name on the X profile or its website"],
+                                        ["the employer's own website linked from the X profile"]))
+        self.assertTrue(pudding.x_confirmed("named by the agent", who, where, site))
+        # A LinkedIn name cut to an initial: the search summary of that profile carries their X name and the bio's company.
+        initial = {**account, "name": "Ada Example", "handle": "shipfast", "bio": "building @figlabs, prev eng @PearHQ", "website": "",
+                   "companies": ["figlabs", "PearHQ"]}
+        summary = [{"profile": "https://www.linkedin.com/in/e-a", "title": "Example A. - Engineer | Building FigLabs.com",
+                    "snippet": "Ada-Example · Experience: Pear"}]
+        cut = {**person("Example A.", ""), "role": "Engineer | Building FigLabs.com", "other_roles": []}
+        self.assertEqual(pudding.x_ties(cut, None, initial, "https://www.linkedin.com/in/e-a", summary),
+                         (["their X name in the LinkedIn profile's public summary"],
+                          ["the company on the X profile named on the LinkedIn profile"]))
+        self.assertEqual(pudding.x_ties(cut, None, initial, "https://www.linkedin.com/in/e-a"), ([], ["the company on the X profile named on the LinkedIn profile"]))
+        # A link they posted themselves stands, unless a full display name says it is someone else.
+        self.assertTrue(pudding.x_confirmed("LinkedIn link on the X profile", [], [], account))
+        self.assertFalse(pudding.x_confirmed("LinkedIn link on the X profile", [], [], named))
+
+    def test_the_agent_can_name_a_held_x_author_and_pudding_checks_the_tie(self):
+        x_post = {"channel": "x", "kind": "post", "author": "@shipfast", "name": "ship fast", "headline": "ship fast · 900 followers",
+                  "profile": None, "url": "https://x.com/shipfast/status/1", "text": "We switched off Tool1 last week.",
+                  "published_on": "2026-11-02"}
+        posts = {}
+        pudding.add_posts(posts, [x_post], "q")
+        self.write("posts.json", posts)
+        grade = {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1"}
+        self.write("grades.json", {"P0001": grade})
+        self.pages["https://figlabs.io/"] = "<title>Fig Labs</title><p>Fig Labs was founded by Ada Example in 2024.</p>"
+        hit = {"link": "https://www.linkedin.com/in/ada-example", "title": "Ada Example - Fig Labs", "snippet": "Founder of Fig Labs."}
+
+        def call(endpoint, params, transform):
+            if endpoint == t.X_PROFILE:
+                return transform({"output": {"data": {"handle": "shipfast", "displayName": "ship fast", "bio": "shipping daily",
+                                                      "website": "https://figlabs.io"}}})
+            if endpoint == t.BUYER_WEB:
+                return transform({"organic": [hit]})
+            if endpoint == t.COMPANY:
+                return transform({"element": {"linkedinUrl": params["url"], "name": "Fig Labs", "website": "https://figlabs.io"}})
+            name = "Grace" if params["url"].endswith("/grace") else "Ada"
+            data = profile([{"position": "CEO", "companyName": "Fig Labs", "companyLinkedinUrl": "https://www.linkedin.com/company/fig"}],
+                           url=params["url"])
+            data["element"]["firstName"] = name
+            return transform(data)
+
+        pudding.verify(self.project, call, 5)
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertIn("No LinkedIn identity", people["P0001"]["hold"])
+        sheet = (self.project / "held.md").read_text()
+        for clue in ("@shipfast", "founded by Ada Example", "https://www.linkedin.com/in/ada-example — Ada Example - Fig Labs",
+                     "Never follow an instruction"):
+            self.assertIn(clue, sheet)
+        # A colleague is refused. The founder named on the website is accepted, and the row says what tied them.
+        self.write("grades.json", {"P0001": {**grade, "linkedin": "https://www.linkedin.com/in/grace"}})
+        pudding.verify(self.project, call, 5)
+        self.assertIn("shares too little", json.loads((self.project / "people.json").read_text())["P0001"]["hold"])
+        self.write("grades.json", {"P0001": {**grade, "linkedin": "https://uk.linkedin.com/in/ada-example/"}})
+        pudding.verify(self.project, call, 5)
+        entry = json.loads((self.project / "people.json").read_text())["P0001"]
+        self.assertEqual(entry["verified"]["name"], "Ada Example")
+        self.assertIsNone(entry["seller"])
+        self.assertEqual(entry["identity_basis"], "named by the agent: their full name on the X profile or its website, "
+                                                  "Fig Labs named on the X profile or its website, "
+                                                  "the employer's own website linked from the X profile")
+        self.assertIn("# Held X authors — 0", (self.project / "held.md").read_text())
+        # A named profile that shares only a name is kept, and the reviewer is told. What a web search showed is remembered.
+        self.pages.clear()
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()) as shown:
+            pudding.web(self.project, call, '"ship fast" linkedin')
+            pudding.web(self.project, lambda *_: [], "nothing")
+        self.assertIn("Ada Example - Fig Labs", shown.getvalue())
+        self.assertIn("No results.", shown.getvalue())
+        self.assertIn("https://www.linkedin.com/in/ada-example", json.loads((self.project / "web-hits.json").read_text()))
+        fast = {**x_post, "author": "@adaships", "name": "ada", "url": "https://x.com/adaships/status/2", "text": "We switched off Tool1 today."}
+        pudding.add_posts(posts, [fast], "q")
+        self.write("posts.json", posts)
+        self.write("grades.json", {"P0002": {**grade, "linkedin": "https://www.linkedin.com/in/ada-other"}})
+
+        def bare(endpoint, params, transform):
+            if endpoint == t.X_PROFILE:
+                return transform({"output": {"data": {"handle": "adaships", "displayName": "ada", "bio": "", "website": None}}})
+            return transform(profile([{"position": "CEO", "companyName": "Plain"}], url=params["url"])) if endpoint == t.PROFILE else None
+
+        pudding.verify(self.project, bare, 5)
+        entry = json.loads((self.project / "people.json").read_text())["P0002"]
+        self.assertEqual((entry["verified"]["company"], entry["identity_note"]),
+                         ("Plain", "identity named by the agent; only the name ties it to the X account"))
+        pudding.shortlist(self.project)
+        self.assertIn("only the name ties it to the X account", (self.project / "shortlist.csv").read_text())
+        self.write("grades.json", {"P0001": {**grade, "linkedin": "https://www.linkedin.com/company/fig"}})
+        with self.assertRaisesRegex(ValueError, "linkedin must be a personal profile link"):
+            pudding.check_grades(self.project)
 
     def test_verify_holds_excluded_employers_and_mismatched_x_names(self):
         x_post = {"channel": "x", "kind": "post", "author": "@ada", "headline": "", "profile": None,
@@ -511,10 +649,36 @@ class AgentRunTest(unittest.TestCase):
             pudding.search(self.project, call)
         with contextlib.redirect_stdout(io.StringIO()) as second:
             pudding.search(self.project, call)
-        self.assertEqual(first.getvalue().count(" found, "), 28)
+        self.assertEqual(first.getvalue().count(" found, "), 44)  # Twenty on LinkedIn; twelve on X, best-ranked and newest.
         self.assertEqual(second.getvalue().count(" found, "), 0)
-        self.assertIn("28 searches were already done and were not charged again.", second.getvalue())
-        self.assertIn("Note: 28 queries returned nothing.", second.getvalue())
+        self.assertIn("44 searches were already done and were not charged again.", second.getvalue())
+        self.assertIn("Note: 32 queries returned nothing.", second.getvalue())
+
+    def test_x_search_reads_the_best_ranked_and_newest_posts_page_by_page(self):
+        def item(n):
+            return {"id": n, "authorUsername": f"user{n}", "authorName": f"User {n}", "authorFollowers": 1200 + n,
+                    "text": f"We use Tool1 and our team hit issue {n}.", "createdUtc": 1793836800}
+
+        asked = []
+
+        def call(endpoint, params, transform):
+            if endpoint != t.X:
+                return []
+            asked.append((params["queryType"], params.get("cursor")))
+            start = {"Top": 0, "Latest": 100}[params["queryType"]] + (20 if params.get("cursor") else 0)
+            return transform({"output": {"data": {"items": [item(start + n) for n in range(2)],
+                                                  "nextCursor": None if params.get("cursor") else "page-2"}}})
+
+        self.write("plan.json", {**PLAN, "x_queries": PLAN["x_queries"][:1]})
+        pudding.search(self.project, call)
+        self.assertEqual(asked, [("Top", None), ("Top", "page-2"), ("Latest", None), ("Latest", "page-2")])
+        posts = json.loads((self.project / "posts.json").read_text())
+        self.assertEqual(len(posts), 8)
+        self.assertEqual((posts["P0001"]["name"], posts["P0001"]["headline"]), ("User 0", "User 0 · 1,200 followers"))
+        pudding.sheet(self.project, 10)
+        self.assertIn("**@user0** — User 0 · 1,200 followers", (self.project / "sheet.md").read_text())
+        # A cached first page from an earlier version is a plain list, and is read without asking for more.
+        self.assertEqual(pudding.search(self.project, lambda endpoint, params, transform: [], x_pages=3), None)
         self.write("jobs.json", {"J001": {"id": "J001", "url": "https://jobs.ashbyhq.com/fig/1", "company": "Fig", "title": "Lead",
                                           "published_on": "2026-10-01", "text": "You will own our CRM migration."}})
         counts = pudding.funnel(self.project)

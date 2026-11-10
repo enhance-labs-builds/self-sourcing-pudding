@@ -47,9 +47,9 @@ Read `site.md`. If the user told you who their buyer is, trust that over the sit
 | `qualifies` | What a post must show: the author's own team doing, changing or struggling with this work. |
 | `exclude_employers` | The company itself and its direct competitors. |
 | `customers` | Every customer the site names. Their people are reported as customers, not prospects. |
-| `seller_terms` | 8 to 12 phrases a company selling in this category uses about itself: `CRM implementation`, `HubSpot partner`, `RevOps agency`. Leave out the tools and words your buyers use about their own work. |
+| `seller_terms` | 8 to 12 phrases a company selling in or near this category uses about itself: `CRM implementation`, `HubSpot partner`, `RevOps agency`. Leave out the tools and words your buyers use about their own work. Matches are flagged for you to judge, not dropped. |
 | `linkedin_queries` | 25 to 35 queries across at least four angles. See below. |
-| `x_queries` | 10 to 15 queries. X needs broader phrasing than LinkedIn. |
+| `x_queries` | 12 to 20 queries. X needs broader phrasing than LinkedIn, and an X search costs a twentieth of a cent. |
 | `job_queries` | 4 to 6 job-ad searches: a title plus the tools or duties an ad would name. |
 | `owner_titles` | Titles of the people who own this work, used to find a contact behind a job ad. |
 | `employer_topic` | One word or short phrase for follow-up searches at an employer, such as `CRM`. |
@@ -88,7 +88,9 @@ X posts are short and rarely repeat an exact phrase. Put five or six voice phras
 "our CRM" ("MCP" OR "Claude" OR "agents")
 ```
 
-A narrow X query such as `"Salesforce" ("we moved off")` usually returns nothing. X pays off for founders and developers and rarely for other buyers.
+A narrow X query such as `"Salesforce" ("we moved off")` usually returns nothing.
+
+For each query Pudding reads the 40 posts people engaged with most and the 40 newest. X is where founders and engineers talk shop, so give it the same care as LinkedIn: cover every angle, and name the tools and the slang the buyer uses there.
 
 Then validate. Fix every error and act on every note.
 
@@ -108,7 +110,7 @@ python3 pudding.py --project DIR sheet --limit 60
 Read `sheet.md` and grade every row in `grades.json`. Save your grades before you run `sheet` again: it writes the next batch over the last one. Teams describing their own work come first and job ads, job seekers and launch posts sink, but the order is a guide, not a ranking.
 
 - Read at least the first 150 authors. After that, stop when two batches in a row give you fewer than three prospects between them, counting every `prospect` you grade, whatever its fit.
-- A row marked `Possible seller` has a headline that pitches this category or names a company you excluded. It reads later for that reason. Grade it `no` unless the post is plainly a buyer describing their own team.
+- A row marked `Possible seller` has a headline that pitches this category or names a company you excluded. It reads later for that reason. A pitch is `no`. A post about their own team's pain is graded like anyone else's: someone who sells nearby often has the problem themselves.
 - A short post is shown whole. A row ending in `…` is cut to its most relevant stretch: `show P0012 P0040` prints posts in full with their parents, and `sheet --chars 1200` shows more of each long post. Copy a quote from text you can see in full.
 - The sheet shows one post per author and reads identical reshares once.
 
@@ -144,7 +146,9 @@ A short reply can be a prospect if it describes the author's own work. Agreement
 python3 pudding.py --project DIR verify
 ```
 
-`verify` confirms each prospect's LinkedIn identity and current role. For an X author it uses a LinkedIn link on the X profile, or a LinkedIn profile with the same name and a shared company or handle, and holds anyone it cannot tie down. `verify --retry-held` tries held people again.
+`verify` confirms each prospect's LinkedIn identity and current role. `verify --retry-held` tries held people again.
+
+For an X author it follows the trail a person would: a LinkedIn link on the X profile, a link on the website the profile points to, then web searches on their name, handle and the company in their bio. It accepts a LinkedIn profile only when the profile shares two checkable things with the X account, one of them about the person. It holds the rest for you.
 
 It also looks up each employer and prints its size on LinkedIn, its industry and its own one-line description:
 
@@ -154,10 +158,40 @@ P0012 Ada Example: CTO, Fig · 59 people on LinkedIn · Software Development · 
 
 **Read every line and regrade before you go on.** The post told you about the person; this tells you about the company.
 
-- `POSSIBLE SELLER` on the line: the employer's own description, a second role on the profile or the headline matches your `seller_terms`, or they work at a company you excluded. They are talking about a problem their own company sells the answer to. Grade `no` unless you can see they are a buyer. If you keep them, the shortlist row carries the flag.
-- An agency, consultancy, outsourcing firm or recruiter: `no`, unless the post is plainly about a product they own.
+- `POSSIBLE SELLER` on the line: the employer's own description, a second role on the profile or the headline matches your `seller_terms`, or they work at a company you excluded. Decide which kind. A direct competitor, selling the same thing to the same buyer, is `no`. Someone who sells something nearby usually lives with the problem too: keep them if the post shows it. The shortlist row carries the flag so the user can decide.
+- An agency, studio or fractional leader describing their own delivery work: keep them, with the label `agency` or `fractional`. They work across several companies and can carry a tool into each. An outsourcing or staffing firm, or a recruiter: `no`.
+- If the user told you who they do and don't want, that decides it.
 - A company far larger or smaller than the buyer you were given, or in the wrong business: `low`, or `look` with a label such as `larger company`.
 - A role that contradicts the post: change the grade to match what is true now.
+
+### Held X authors
+
+Most held X authors can be placed in a minute. `verify` writes `held.md` with what it found for each: the bio, the website and what it says, their post, and the LinkedIn profiles its searches turned up.
+
+```sh
+python3 pudding.py --project DIR timeline @handle
+python3 pudding.py --project DIR web '"Ada Example" Fig Labs linkedin'
+```
+
+- Read the bio for the company they are building, then look for that company's founders and engineers.
+- A handle is often a name: `aexample_dev` is probably an A. Example. Search the surname with the company.
+- `timeline` prints their recent posts, which name their product, their co-founders and their city.
+- Two searches usually do it: the company plus `founder` to get a name, then the name plus `linkedin` to get the profile.
+- An X bio often says what they sell. A seller of a competing tool is a `no`, whoever they turn out to be.
+- When you are confident, add the profile to their grade and run `verify` again:
+
+```json
+"P0412": {"verdict": "prospect", "fit": "look", "quote": "...", "why": "...",
+          "linkedin": "https://www.linkedin.com/in/ada-example"}
+```
+
+`verify` checks your answer the way it checks its own. A tie to the person is the same name, a name that fits the handle, their full name on the linked website, the same handle, or a LinkedIn profile that links the X account. A second tie is the company from the X bio on their LinkedIn profile, or their employer on the X profile or its website.
+
+- Both ties: verified.
+- Only a tie to the person: kept, with a label saying you named them. Name someone on a name alone only when the name is uncommon and their LinkedIn profile fits what they post about. If the profile shows another field or no employer, leave them held.
+- No tie to the person: held. A colleague at the same company is refused, and naming the same profile again will not change that.
+
+Each `web` or `timeline` call costs about a tenth of a cent, inside the run's cap. Spend up to six on a `strong` or `look` person, and leave out anyone who posts anonymously.
 
 ### Optional: follow the threads
 

@@ -28,7 +28,9 @@ VERDICTS = {"prospect", "customer", "churned", "built_own", "borderline", "no"}
 JOB_VERDICTS = {"mandate", "customer", "no"}
 QUOTED = {"prospect", "customer", "churned", "built_own"}
 FITS = ("strong", "look", "low")
-LIMITS = {"linkedin_queries": (5, 40), "x_queries": (0, 15), "job_queries": (0, 8)}
+LIMITS = {"linkedin_queries": (5, 40), "x_queries": (0, 25), "job_queries": (0, 8)}
+FULL_NAME = r"[^\W\d_]+(?:[ '.-][^\W\d_]+)+"
+LINKEDIN_PERSON = r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[\w%.-]+"
 SITE_PAGES = ("customer", "case-stud", "pricing", "compare", "about", "solution", "product", "platform")
 OWNERS = {"ceo", "founder", "cofounder", "owner", "president", "coo", "cro", "chief"}
 OWN = re.compile(
@@ -366,8 +368,8 @@ def plan_notes(plan, searched=False):
                      "so sellers sink on the reading sheet and are flagged when verified.")
     if plan["job_queries"] and not plan["owner_titles"]:
         notes.append("Add owner_titles so job ads can be tied to a current owner.")
-    if len(plan["x_queries"]) < 8:
-        notes.append("Fewer than 8 X queries. X returns up to 20 posts a query, so it needs more of them.")
+    if len(plan["x_queries"]) < 12:
+        notes.append("Fewer than 12 X queries. An X search costs a twentieth of a cent, so write 12 to 20.")
     if plan["x_queries"] and not any(re.search(r'"(?:our team|we use)"', q, re.I) for q in plan["x_queries"]):
         notes.append('No X query includes a broad phrase such as "our team" or "we use"; narrow X queries often return nothing.')
     if not plan.get("customers") and not searched:
@@ -411,7 +413,7 @@ def since_date(project):
     return (date.fromisoformat(state["created"]) - timedelta(days=state["window_days"])).isoformat()
 
 
-def search(project, call, pages=1):
+def search(project, call, pages=1, x_pages=2):
     plan, posts, since = load_plan(project), load_posts(project), since_date(project)
     days = read(project / "project.json")["window_days"]
     limit = {"postedLimit": "week"} if days <= 7 else {"postedLimit": "month"} if days <= 31 else {}
@@ -421,24 +423,32 @@ def search(project, call, pages=1):
     def run(channel, endpoint, params, parse, query):
         nonlocal repeats
         again = done(endpoint, params)
-        rows = call(endpoint, params, parse)
+        found = call(endpoint, params, parse)
+        rows = found.get("posts") if isinstance(found, dict) else found
         added = add_posts(posts, rows, query, since=since)
         repeats += again
         if not again:  # A query searched earlier costs nothing and tells the reader nothing new.
             print(terminal_text(f"{channel:8} {len(rows or []):3d} found, {added:3d} new | {query}"), flush=True)
-        return rows
+        return rows, None if again or not isinstance(found, dict) else found.get("next")
 
     for query in plan["linkedin_queries"]:
         for page in range(1, pages + 1):
-            rows = run("linkedin", t.LINKEDIN, {"search": query, **limit, "sortBy": "date", "page": page}, t.linkedin_posts, query)
+            rows, _ = run("linkedin", t.LINKEDIN, {"search": query, **limit, "sortBy": "date", "page": page}, t.linkedin_posts, query)
             if page == 1 and not rows:
                 empty.append(query)
             if len(rows or []) < 40:
                 break
     for query in plan["x_queries"]:
-        rows = run("x", t.X, {"query": f"{query} since:{since} -filter:retweets", "queryType": "Latest", "limit": 20},
-                   t.x_posts, query)
-        if not rows:
+        found = 0
+        for order in ("Top", "Latest"):  # The posts people engaged with, then the newest.
+            params = {"query": f"{query} since:{since} -filter:retweets", "queryType": order, "limit": 20}
+            for _ in range(x_pages):
+                rows, cursor = run(f"x {order.lower()}", t.X, params, t.x_page, query)
+                found += len(rows or [])
+                if not cursor:  # The last page, or a search from an earlier run whose pages were already read.
+                    break
+                params = {**params, "cursor": cursor}
+        if not found:
             empty.append(query)
     t.atomic_json(project / "posts.json", posts)
     if repeats:
@@ -481,6 +491,7 @@ def score(post, terms, buyer="", sells=False):
             + (min(hits, 8) * 1.5 if hits else -6)
             - min(len(NOISE.findall(text)), 4) * 3 - min(len(ADVICE.findall(text)), 3) * 3
             - min(len(SHOWCASE.findall(text)), 3) * 3 - (15 if job else 0) - (10 if sells else 0) - (0 if person else 8)
+            + (3 if post["channel"] == "x" else 0)  # An X post has a fifth of the words to earn the same marks.
             + min(len(text), 1500) / 1500)
 
 
@@ -577,9 +588,18 @@ def check_grades(project):
             problems.append(f"{key}: fit must be strong, look or low.")
         if not isinstance(grade.get("labels", []), list):
             problems.append(f"{key}: labels must be a list.")
+        if "linkedin" in grade and not named_profile(grade):
+            problems.append(f"{key}: linkedin must be a personal profile link such as https://www.linkedin.com/in/name.")
     if problems:
         raise ValueError("Fix grades.json:\n  " + "\n  ".join(problems))
     return posts, grades
+
+
+def named_profile(grade):
+    try:
+        return linkedin_result({"link": grade["linkedin"]}) if isinstance(grade.get("linkedin"), str) else None
+    except ValueError:
+        return None
 
 
 # Spider
@@ -723,39 +743,186 @@ def headcount(count, where=""):
     return f"{count:,} {'person' if count == 1 else 'people'}{where}" if count else ""
 
 
-def x_identity(call, handle):
-    """Tie an X account to one LinkedIn profile: a link on the X profile, or the same name plus a shared company or handle."""
+def x_account(call, handle, name=""):
+    """What an X account says about its owner: the profile, and the website it links to."""
     profile = call(t.X_PROFILE, {"handle": handle}, lambda data: {
         key: ((data.get("output") or {}).get("data") or {}).get(key)
         for key in ("handle", "displayName", "bio", "description", "website")}) or {}
-    name = norm(re.sub(r"[^\w\s'.-]", "", profile.get("displayName") or ""))
-    bio = " ".join(filter(None, [profile.get("bio"), profile.get("description")]))
-    links = t.linkedin_links([profile.get("website"), *re.findall(r"https://(?:www\.)?linkedin\.com/in/[\w%.-]+/?", bio)])
-    if len(links) == 1:
-        return name, links.pop(), "LinkedIn link on the X profile"
-    if len(name.split()) < 2 or not re.fullmatch(r"[^\W\d_]+(?:[ '.-][^\W\d_]+)+", name):
-        return name, None, "the X profile shows no full name"
-    site = re.sub(r"^https?://(?:www\.)?", "", profile.get("website") or "").split("/")[0].rsplit(".", 1)[0]
-    company = re.search(r"(?:@|\bat )\s*([A-Z][\w&-]*(?: [A-Z][\w&-]*){0,2})", bio)  # Stops at the sentence end.
-    company = company.group(1) if company else ""
-    hint = company or site or handle
-    anchors = {anchor for anchor in (compact(company), compact(site)) if len(anchor) >= 4}
-    hits = call(t.BUYER_WEB, {"q": f'"{name}" {hint} linkedin', "num": 10}, web_results) or []
-    matches = {}
+    bio = norm(" ".join(filter(None, [profile.get("bio"), profile.get("description")])))
+    account = {"handle": handle, "name": norm(re.sub(r"[^\w\s'.-]", "", profile.get("displayName") or name or "")),
+               "bio": bio, "website": profile.get("website") or "", "site": "", "site_text": "", "site_links": [],
+               "links": sorted(t.linkedin_links([profile.get("website"), *re.findall(LINKEDIN_PERSON, bio)]))}
+    if account["website"] and not account["links"]:
+        try:
+            site, html = fetch_page(public_url(account["website"], keep_query=True))
+            account.update(site=site, site_text=page_text(html, 3000),
+                           site_links=sorted(t.linkedin_links(re.findall(LINKEDIN_PERSON, html))))
+        except (ValueError, OSError):
+            pass
+    # "Founder @ Fig Labs", "CRO at Fig Labs. Before that, Pear." and "building @figlabs, prev @pear": the first is current.
+    companies = [m.group(1) or m.group(2) for m in
+                 re.finditer(r"(?:@\s*|\bat )([A-Z][\w&-]*(?: [A-Z][\w&-]*){0,2})|@(\w[\w&-]*)", bio)]
+    site = re.sub(r"^https?://(?:www\.)?", "", account["site"] or account["website"]).split("/")[0].rsplit(".", 1)[0]
+    account.update(company=companies[0] if companies else "", companies=companies, site_name=site)
+    return account
+
+
+def x_candidate(call, account):
+    """Follow an X account to one LinkedIn profile: a link it gives, a link on its website, then web searches."""
+    if len(account["links"]) == 1:
+        return account["links"][0], "LinkedIn link on the X profile", []
+    if len(account["site_links"]) == 1:
+        return account["site_links"][0], "LinkedIn link on their website", []
+    name, handle = account["name"], account["handle"]
+    full = bool(re.fullmatch(FULL_NAME, name))
+    company, site, anchors = account["company"], account["site_name"], x_anchors(account)
+    queries = [f'"{name}" {company or site or handle} linkedin'] if full else []
+    queries.append(f'"{handle}" linkedin')  # People reuse a handle, and profiles quote it.
+    if company or site:
+        queries.append(f'"{company or site}" {name.split()[0] if name else handle} linkedin')
+    candidates = {}
+    for query in dict.fromkeys(queries):
+        matches = {}
+        for hit in call(t.BUYER_WEB, {"q": query, "num": 10}, web_results) or []:
+            found = linkedin_result(hit)
+            if not found:
+                continue
+            candidates.setdefault(found, {"profile": found, "title": norm(hit.get("title"))[:120],
+                                          "snippet": norm(hit.get("snippet"))[:200]})
+            text = (hit.get("title") or "") + " " + (hit.get("snippet") or "")
+            shared = sorted(anchor for anchor in anchors if anchor in compact(text))
+            if compact(found.rsplit("/", 1)[-1]) == compact(handle):
+                shared.append("the same handle")
+            title = norm(hit.get("title")).casefold()
+            named = full and title.startswith(name.casefold())
+            first = not full and len(name) >= 3 and name.isalpha() and title.split(" ")[0] == name.casefold()
+            if links_account(text, handle):  # Their LinkedIn profile lists this X account: nothing else is needed to try it.
+                matches[found] = "web search: their LinkedIn profile links this X account"
+            elif shared and (named or first or len(shared) > 1 and "the same handle" in shared):
+                matches[found] = ("web search: same name and " if named else "web search: same first name and " if first
+                                  else "web search: ") + ", ".join(shared)
+        if len(matches) == 1:
+            return *next(iter(matches.items())), list(candidates.values())
+        if matches:
+            return None, "more than one LinkedIn profile fits the name and company", list(candidates.values())
+    return None, "nothing on the X profile, its website or a web search pointed to one LinkedIn profile", list(candidates.values())
+
+
+def x_anchors(account):
+    """The company in the bio and the name of the linked site, as they would appear run together in other text."""
+    names = [*account.get("companies", [account.get("company")]), account.get("site_name")]
+    return {anchor for anchor in map(compact, names) if len(anchor) >= 4}
+
+
+def links_account(text, handle):
+    return bool(re.search(r"(?:twitter|x)\.com/" + re.escape(handle) + r"(?![A-Za-z0-9_])", text or "", re.I))
+
+
+def x_ties(person, record, account, profile, candidates=()):
+    """What a LinkedIn profile checkably shares with an X account: ties to the person, then ties to the employer."""
+    display, handle = account["name"], account["handle"]
+    about = compact(" ".join([account["bio"], account["website"], account["site"], account["site_text"]]))
+    first, last = compact(person.get("first_name")), compact(person.get("last_name"))
+    who = []
+    if same_name(person["name"], display):
+        who.append("the same name")
+    elif not re.fullmatch(FULL_NAME, display) and any(  # A handle or a first name: one of their names has to be in it.
+            len(word) >= 4 and word in compact(display + handle)
+            or len(word) >= 3 and word in re.split(r"[^a-z]+", f"{display} {handle}".casefold())
+            for word in (first, last)):
+        who.append("a name that fits the account")
+    if first and last and first + last in about:
+        who.append("their full name on the X profile or its website")
+    if compact(profile.rsplit("/", 1)[-1]) == compact(handle):
+        who.append("the same handle")
+    summary = " ".join(row["title"] + " " + row["snippet"] for row in candidates if row["profile"] == profile)
+    if links_account(summary, handle):
+        who.append("their LinkedIn profile links this X account")
+    if not who and re.fullmatch(FULL_NAME, display) and compact(display) in compact(summary):
+        who.append("their X name in the LinkedIn profile's public summary")
+    where = []
+    firm = compact(brand(person["company"]))
+    if len(firm) >= 4 and firm in about:
+        where.append(f"{brand(person['company'])} named on the X profile or its website")
+    elif any(anchor in compact(" ".join([person["role"], person["company"], *person.get("other_roles", []), summary]))
+             for anchor in x_anchors(account)):
+        where.append("the company on the X profile named on the LinkedIn profile")
+    host = lambda url: (urlsplit(url).hostname or "").removeprefix("www.") if url else ""
+    if record and host(record.get("url")) and host(record.get("url")) == host(account["site"] or public_site(account["website"])):
+        where.append("the employer's own website linked from the X profile")
+    return who, where
+
+
+def public_site(url):
+    try:
+        return public_url(url) if url else ""
+    except ValueError:
+        return ""
+
+
+def x_confirmed(basis, who, where, account):
+    """A link they posted themselves stands unless their name says otherwise. Anything else needs two ties, one to the person."""
+    if basis == "LinkedIn link on the X profile":
+        return bool(who or where) or not re.fullmatch(FULL_NAME, account["name"])
+    return bool(who) and len(who) + len(where) + (basis == "LinkedIn link on their website") >= 2
+
+
+def held_sheet(project, posts, people):
+    """Lay out what is known about each held X author so the agent can work out who they are."""
+    held = [(key, entry) for key, entry in people.items() if entry.get("account") and not entry["verified"]]
+    lines = [f"# Held X authors — {len(held)}", "",
+             "Pudding could not tie these X accounts to a LinkedIn profile on its own. Work out who each one is the way a person "
+             "would: the bio, the website, their other posts, a search for their name. Then add the profile to their grade, as "
+             '`"linkedin": "https://www.linkedin.com/in/name"`, and run `verify` again.', "",
+             "Pudding checks the profile you name against the X account. A tie to the person is the same name, a name that fits "
+             "the handle, their full name on the linked website, the same handle, or a LinkedIn profile that links the X account. "
+             "A second tie is the company from the X bio on their LinkedIn profile, or their employer on the X profile or its "
+             "website. With both, they are verified. With only a tie to the person, they are kept and labelled as named by you. "
+             "With none, they stay held: naming the same profile again will not change that. Leave out anyone you cannot place.", "",
+             "`timeline @handle` prints their recent posts. `web \"query\"` runs a web search.", "", DATA_NOTE, ""]
+    for key, entry in held:
+        account = entry["account"]
+        lines += [f"## {key} · @{account['handle']} · {account['name'] or 'no display name'}",
+                  f"Held because: {entry['hold']}", f"Bio: {account['bio'] or 'none'}",
+                  f"Website: {account['site'] or account['website'] or 'none'}",
+                  *([f"Website says: {account['site_text'][:400]}"] if account.get("site_text") else []),
+                  f"Their post: {excerpt(posts[key]['text'], size=300)}",
+                  *[f"- Candidate: {row['profile']} — {row['title']} — {row['snippet']}" for row in likely(account, entry)], ""]
+    if held or (project / "held.md").exists():
+        save(project / "held.md", terminal_text("\n".join(lines)) + "\n")
+    return len(held)
+
+
+def likely(account, entry):
+    """The search results worth a look: they share a name, the handle or the company with the X account."""
+    words = {word for word in re.split(r"[^a-z]+", f"{account['name']} {account['handle']}".casefold()) if len(word) >= 3}
+    clues = words | x_anchors(account)
+    return [row for row in entry.get("candidates", [])
+            if any(clue in compact(row["title"] + row["snippet"] + row["profile"]) for clue in clues)][:5]
+
+
+def web(project, call, query):
+    hits = call(t.BUYER_WEB, {"q": query, "num": 10}, web_results) or []
+    seen = read(project / "web-hits.json", {})  # What a search showed of a profile is evidence verify can check later.
     for hit in hits:
-        found = linkedin_result(hit)
-        if not found or not norm(hit.get("title")).casefold().startswith(name.casefold()):
-            continue
-        shared = sorted(anchor for anchor in anchors if anchor in compact((hit.get("title") or "") + (hit.get("snippet") or "")))
-        if found.rsplit("/", 1)[-1] == handle.casefold():
-            shared.append("the same handle")
-        if shared:
-            matches[found] = shared
-    if len(matches) != 1:
-        return name, None, ("no LinkedIn profile shared the name and a company or handle" if not matches
-                            else "more than one LinkedIn profile shared the name and company")
-    found, shared = next(iter(matches.items()))
-    return name, found, "web search: same name and " + ", ".join(shared)
+        if found := linkedin_result(hit):
+            seen[found] = {"profile": found, "title": norm(hit.get("title"))[:120], "snippet": norm(hit.get("snippet"))[:200]}
+    t.atomic_json(project / "web-hits.json", seen)
+    print(DATA_NOTE.lstrip("> ") + "\n")
+    for hit in hits:
+        print(terminal_text(f"{hit.get('title')}\n  {hit.get('link')}\n  {hit.get('snippet')}\n"))
+    if not hits:
+        print("No results. Try fewer words, or drop the quotes.")
+
+
+def timeline(call, handle):
+    handle = handle.lstrip("@")
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle):
+        raise ValueError("Give an X handle such as @name.")
+    found = call(t.X, {"query": f"from:{handle} -filter:retweets", "queryType": "Latest", "limit": 20}, t.x_page) or {}
+    print(DATA_NOTE.lstrip("> ") + "\n")
+    for post in found.get("posts") or []:
+        print(terminal_text(f"--- {post['published_on']} · {post['url']}\n{post['text']}\n"))
 
 
 def verify(project, call, limit, retry_held=False):
@@ -763,18 +930,24 @@ def verify(project, call, limit, retry_held=False):
     posts, grades = check_grades(project)
     people = read(project / "people.json", {})
     todo = [key for key, grade in grades.items() if grade["verdict"] == "prospect"
-            and (key not in people or retry_held and not people[key]["verified"])]
+            and (key not in people or (retry_held or named_profile(grade)) and not people[key]["verified"])]
     todo.sort(key=lambda key: (FITS.index(grades[key]["fit"]), key))
+    searched = read(project / "web-hits.json", {})
     for key in todo[:limit]:
         post = posts[key]
         entry = {"channel": post["channel"], "source_url": post["url"], "verified": None, "hold": None}
-        profile, x_name = post.get("profile"), None
+        profile, account = post.get("profile"), None
         if post["channel"] == "x":
             if not post["author"].startswith("@"):
                 entry["hold"] = "A quote post's author has no handle to look up."
             else:
-                x_name, profile, basis = x_identity(call, post["author"][1:])
-                entry.update(identity_basis=basis, x_name=x_name)
+                account = x_account(call, post["author"][1:], post.get("name"))
+                named = named_profile(grades[key])
+                profile, basis, candidates = (named, "named by the agent", []) if named else x_candidate(call, account)
+                entry.update(identity_basis=basis, x_name=account["name"], account=account,
+                             candidates=candidates or people.get(key, {}).get("candidates", []))
+                if named and named in searched and all(row["profile"] != named for row in entry["candidates"]):
+                    entry["candidates"] = [*entry["candidates"], searched[named]]
                 if not profile:
                     entry["hold"] = f"No LinkedIn identity: {basis}."
         elif not profile:
@@ -787,17 +960,28 @@ def verify(project, call, limit, retry_held=False):
                 entry["hold"] = "The spend cap was reached before this person could be checked."
             elif not person:
                 entry["hold"] = "LinkedIn returned no name, role or headline for this profile."
-            elif x_name and not same_name(person["name"], x_name):
-                entry["hold"] = "The LinkedIn name does not match the X account."
             elif listed(person["company"], plan["exclude_employers"]):
                 entry["hold"] = f"Works for an excluded employer ({person['company']})."
             elif suppressed(person["company"], skip, person.get("company_url")):
                 entry["hold"] = f"On your suppression list ({person['company']})."
             else:
                 record = employer(call, person)
-                entry.update(verified=person, profile_url=profile, employer=record, seller=seller(
-                    plan, person["role"], *(f"{role} at {role.rsplit(', ', 1)[-1]}" for role in person["other_roles"]),
-                    post.get("headline"), (record or {}).get("about")))
+                who, where = x_ties(person, record, account, profile, entry["candidates"]) if account else ([], [])
+                sure = not account or x_confirmed(entry["identity_basis"], who, where, account)
+                if not sure and not (who and entry["identity_basis"] == "named by the agent"):
+                    entry["hold"] = ("The LinkedIn name does not match the X account." if entry["identity_basis"].endswith("X profile")
+                                     else f"{profile} shares too little with the X account to be sure it is them. "
+                                          f"Found: {', '.join(who + where) or 'nothing checkable'}. It needs a tie to the person "
+                                          "(their name, their handle, or a profile that links the X account) and a second tie, "
+                                          "such as the company in the X bio.")
+                else:
+                    if not sure:  # The agent placed them and only the name agrees: the reviewer is told.
+                        entry["identity_note"] = "identity named by the agent; only the name ties it to the X account"
+                    if who or where:
+                        entry["identity_basis"] += ": " + ", ".join(who + where)
+                    entry.update(verified=person, profile_url=profile, employer=record, seller=seller(
+                        plan, person["role"], *(f"{role} at {role.rsplit(', ', 1)[-1]}" for role in person["other_roles"]),
+                        post.get("headline"), (record or {}).get("about"), (account or {}).get("bio")))
         people[key] = entry
         state = (" · ".join(filter(None, [f"{entry['verified']['role']}, {entry['verified']['company'] or 'no employer listed'}",
                                           employer_line(entry["employer"]),
@@ -807,9 +991,12 @@ def verify(project, call, limit, retry_held=False):
         t.atomic_json(project / "people.json", people)
     if len(todo) > limit:
         print(f"{len(todo) - limit} prospects are still unchecked. Run verify again.")
+    held = held_sheet(project, posts, people)
+    if held:
+        print(f"{held} X authors are held. Read {project / 'held.md'}: it shows what is known about each and how to name them.")
     if todo:
-        print("Read each employer above. Regrade anyone at an agency, a consultancy, a seller in this category "
-              "or a company far from the buyer.")
+        print("Read each employer above and regrade where it changes the picture: a direct competitor is a no; "
+              "an agency, a nearby seller or a company far from the buyer's size is a label.")
 
 
 # Job ads
@@ -1141,10 +1328,13 @@ def shortlist_rows(project):
         labels = list(grade.get("labels", []))
         if entry.get("seller"):
             labels.append(f"possible seller: {entry['seller']}")
+        if entry.get("identity_note"):
+            labels.append(entry["identity_note"])
         if person["role_basis"] != "current role":
             labels.append(f"role from {person['role_basis']}")
         headline = source.get("headline") or ""
-        if (key in posts and person["company"] and headline and compact(person["company"]) not in compact(headline)
+        if (key in posts and entry["channel"] == "linkedin" and person["company"] and headline
+                and compact(person["company"]) not in compact(headline)
                 and not any("employer" in label for label in labels)):
             labels.append("current employer not in the post's headline")
         if key in jobs and entry.get("identity_basis") != "named owner title":
@@ -1288,6 +1478,7 @@ def main(argv=None):
     commands.add_parser("check", help="validate plan.json, grades.json and job-grades.json")
     find = commands.add_parser("search", help="run the planned LinkedIn and X searches")
     find.add_argument("--pages", type=int, default=1, choices=(1, 2, 3))
+    find.add_argument("--x-pages", type=int, default=2, choices=(1, 2, 3, 4, 5), help="pages of 20 per X query, best-ranked then newest")
     page = commands.add_parser("sheet", help="write the next reading sheet of ungraded posts, or job ads with --jobs")
     page.add_argument("--limit", type=int)
     page.add_argument("--jobs", action="store_true")
@@ -1313,6 +1504,10 @@ def main(argv=None):
     emails = commands.add_parser("enrich", help="find and verify work email for the people you said yes to")
     emails.add_argument("--limit", type=int, default=25)
     emails.add_argument("--all", action="store_true", help="cover everyone worth contacting, not only your yes answers")
+    look = commands.add_parser("web", help="run one web search, to work out who a held X author is")
+    look.add_argument("query")
+    recent = commands.add_parser("timeline", help="print an X author's recent posts")
+    recent.add_argument("handle")
     commands.add_parser("status", help="show the funnel and spend")
     args = cli.parse_args(argv)
     project = args.project
@@ -1348,7 +1543,7 @@ def main(argv=None):
         else:
             with ledger(project) as call:
                 if args.command == "search":
-                    search(project, call, args.pages)
+                    search(project, call, args.pages, args.x_pages)
                 elif args.command == "spider":
                     spider(project, call, args.threads, args.x_threads, args.quote_pages, args.employers)
                 elif args.command == "verify":
@@ -1357,6 +1552,10 @@ def main(argv=None):
                     jobs_search(project, call, args.per_query, args.lookback_days)
                 elif args.command == "contacts":
                     job_contacts(project, call, args.per_job)
+                elif args.command == "web":
+                    web(project, call, args.query)
+                elif args.command == "timeline":
+                    timeline(call, args.handle)
                 elif args.command == "enrich":
                     enrich(project, call, args.limit, args.all)
     except (ValueError, OSError) as error:

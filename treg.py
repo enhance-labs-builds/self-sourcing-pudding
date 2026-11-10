@@ -231,6 +231,11 @@ def prepare_call(path, state, endpoint, params, quote, *, reserve=0):
     key = call_key(endpoint, params)
     calls = state["calls"]
     call = calls.get(key)
+    retries = sum(1 for other in calls if other.startswith(key + ":rate-limited:"))
+    if call and call["status"] == "rate_limited":
+        # Keep the receipt, and let this attempt go out under a new idempotency key.
+        calls[f"{key}:rate-limited:{retries}"] = calls.pop(key)
+        call, retries = None, retries + 1
     if call and call["status"] != "pending":
         return None
     if call is None:
@@ -251,7 +256,7 @@ def prepare_call(path, state, endpoint, params, quote, *, reserve=0):
             raise PendingCall(f"Treg cannot safely replay {endpoint}{reference}. Check Treg Activity; the reservation is still held.")
     else:
         call = {"endpoint": endpoint, "params": params, "status": "pending", "reserved_micro": ceiling,
-                "started_at": time(), "idempotency_key": f"pudding-{state['id']}-{key[:24]}"}
+                "started_at": time(), "idempotency_key": f"pudding-{state['id']}-{key[:24]}" + (f"-r{retries}" if retries else "")}
         calls[key] = call
         atomic_json(path, state)
     return call, recovering
@@ -302,6 +307,8 @@ def settle_call(path, state, call, recovering, response, transform):
     if charged > call["reserved_micro"]:
         raise PendingCall(f"{endpoint} reported a charge above its reservation. Stopped; check Treg Activity.")
     call.update(status="settled", cost_micro=charged)
+    if status == 429 and charged == 0:
+        call["status"] = "rate_limited"  # Free and empty: a later run may try it again.
     if replayed:
         call["replayed"] = True
     try:

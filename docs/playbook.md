@@ -12,6 +12,14 @@ Pudding does the lookups, enforces the cap, keeps the receipts and rejects any q
 - A Treg team with no connected provider keys or custom tools: set `TREG_TOKEN` and `TREG_ORG`, or sign in with the Treg CLI. If a paid step says the team can't be used, tell the user and stop.
 - A private project folder outside the repository. It will hold real names and posts. Pudding keeps every file in it readable by you alone.
 
+Check the sign-in first. It costs nothing:
+
+```sh
+python3 pudding.py connect
+```
+
+If it fails, walk the user through creating a Treg team and setting the two values in the terminal themselves. Never ask them to paste a token into the chat.
+
 Every command takes the project folder first:
 
 ```sh
@@ -28,7 +36,7 @@ python3 pudding.py --project DIR start https://example.com --budget-usd 1.00
 
 If there was an earlier run, add `--previous OLD_DIR`. Pudding then leaves out everyone already shown and writes `feedback.md`: what the reviewer said yes and no to. Read it before you plan and before you grade.
 
-If the user has a list of people or companies already in their pipeline, add `--suppress FILE`: one LinkedIn profile link or company name per line.
+If the user has a list of people or companies already in their pipeline, add `--suppress FILE`: one LinkedIn profile link, work email, domain or company name per line. `start` says how many lines it could not use.
 
 Read `site.md`. If the user told you who their buyer is, trust that over the site. If `start` says the site returned little text, ask the user to describe the product and the buyer. Then fill in `plan.json`:
 

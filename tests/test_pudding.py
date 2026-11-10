@@ -431,12 +431,30 @@ class AgentRunTest(unittest.TestCase):
                 "text": "Our renewal is in 60 days and we're evaluating alternatives to Tool1. Anyone using something better?"}
         terms = pudding.topic_terms(PLAN)
         self.assertGreater(pudding.score(soon, terms), pudding.score(done, terms))
+        # The way a buyer writes it, and the way a consultant writes about it.
+        plain = {**soon, "text": "Our Tool1 contract ends in Q1 and I need to replace it. Six reps, one admin."}
+        formal = {**soon, "text": "We are evaluating CRMs to replace Tool1 before our contract ends."}
+        advice = {**soon, "text": "Thinking about alternatives to Tool1? Is your contract up for renewal soon? Here are 5 signs "
+                                  "you should switch. If you're a founder, your team deserves better."}
+        for buyer in (plain, formal):
+            self.assertGreater(pudding.score(buyer, terms), pudding.score(done, terms))
+            self.assertGreater(pudding.score(buyer, terms), pudding.score(advice, terms) + 10)
 
     def test_a_suppression_list_keeps_people_and_companies_out(self):
         listing = self.project / "skip.txt"
         listing.write_text("# existing pipeline\nhttps://www.linkedin.com/in/Ada/?trk=x\nFig\n\n")
         skip = pudding.suppression(listing)
-        self.assertEqual(skip, {"profiles": ["https://www.linkedin.com/in/ada"], "companies": ["Fig"]})
+        self.assertEqual(skip, {"profiles": ["https://www.linkedin.com/in/ada"], "companies": ["Fig"], "domains": [], "unread": 0})
+        listing.write_text("\n".join([
+            "uk.linkedin.com/in/Bo-Other", "http://www.linkedin.com/in/cy/", "https://www.linkedin.com/sales/lead/ACwAAA,NAME",
+            "dana@junipervale.com", "someone@gmail.com", "gong.io", "https://www.deel.com/pricing", "stripe.co.uk", '"Acme, Inc."']))
+        export = pudding.suppression(listing)
+        self.assertEqual(export["profiles"], ["https://www.linkedin.com/in/bo-other", "https://www.linkedin.com/in/cy"])
+        self.assertEqual((export["domains"], export["companies"], export["unread"]),
+                         (["deel.com", "gong.io", "junipervale.com", "stripe.co.uk"], ["Acme, Inc."], 2))
+        for company in ("Gong", "Deel, Inc.", "Juniper Vale Software", "Stripe", "Acme"):
+            self.assertTrue(pudding.suppressed(company, export), company)
+        self.assertFalse(pudding.suppressed("Gong Cha Tea", export))
         self.write("suppress.json", skip)
         other = {**POST, "author": "Bo Other", "profile": "https://www.linkedin.com/in/bo", "url": POST["url"].replace("0001", "0005")}
         posts = {}
@@ -450,6 +468,35 @@ class AgentRunTest(unittest.TestCase):
         call = lambda endpoint, params, transform: transform(profile([{"position": "CEO", "companyName": "Fig, Inc."}], url=params["url"]))
         pudding.verify(self.project, call, 10)
         self.assertIn("suppression list", json.loads((self.project / "people.json").read_text())["P0002"]["hold"])
+        # Someone on the list who turns up through X is caught once their LinkedIn identity is known, before the role lookup.
+        x_post = {"channel": "x", "kind": "post", "author": "@ada", "headline": "", "profile": None,
+                  "url": "https://x.com/ada/status/9", "text": "We switched off Tool1 last week.", "published_on": "2026-11-02"}
+        pudding.add_posts(posts, [x_post], "q")
+        self.write("posts.json", posts)
+        self.write("grades.json", {"P0003": {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1"}})
+        paid = []
+
+        def x_call(endpoint, params, transform):
+            paid.append(endpoint)
+            return transform({"output": {"data": {"handle": "ada", "displayName": "Ada Example",
+                                                  "bio": "https://www.linkedin.com/in/ada"}}})
+
+        pudding.verify(self.project, x_call, 10)
+        self.assertEqual(json.loads((self.project / "people.json").read_text())["P0003"]["hold"], "On your suppression list.")
+        self.assertEqual(paid, [t.X_PROFILE])
+
+    def test_a_lookup_the_cap_declined_is_reported_as_such(self):
+        posts = {}
+        pudding.add_posts(posts, [POST], "q")
+        self.write("posts.json", posts)
+        self.write("grades.json", {"P0001": {"verdict": "prospect", "fit": "strong", "why": "Own team.",
+                                             "quote": "We switched off Tool1 in March."}})
+        call = lambda endpoint, params, transform: None
+        call.declined = lambda endpoint, params: True
+        pudding.verify(self.project, call, 10)
+        self.assertEqual(json.loads((self.project / "people.json").read_text())["P0001"]["hold"],
+                         "The spend cap was reached before this person could be checked.")
+        self.assertEqual(pudding.main(["status"]), 1)  # A command other than connect needs a run folder.
         self.assertTrue(pudding.listed("Salesforce.com", ["Salesforce"]))
         self.assertTrue(pudding.listed("Acme GmbH", ["Acme"]))
         self.assertFalse(pudding.listed("Acme Robotics", ["Acme"]))

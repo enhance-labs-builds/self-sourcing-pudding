@@ -110,8 +110,8 @@ def build(folder):
     write("ledger/treg-run.json", {"plan": {}, "org": "example", "id": "sample",
                                    "calls": {str(n): {"status": "settled", "cost_micro": 3000} for n in range(14)}})
     pudding.shortlist(project)
-    note = ("# Sample shortlist\n\nEvery person, company, post and address here is fictional. "
-            "`examples/make_sample.py` writes this file with the same code a real run uses.\n")
+    note = ("# Sample shortlist\n\nEvery person, company, post and address here is fictional, and so are the counts and the spend. "
+            "`examples/make_sample.py` writes this file with the same code a real run uses, so the layout is exact.\n")
     page = (project / "shortlist.md").read_text(encoding="utf-8").replace("# Shortlist\n", note, 1)
     return page, (project / "shortlist.csv").read_text(encoding="utf-8")
 

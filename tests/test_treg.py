@@ -68,6 +68,17 @@ class LedgerTest(unittest.TestCase):
             self.assertEqual((t.billing(state), t.pending_calls(state)), (2000, {}))
         self.assertEqual(client.sent[0][3]["Idempotency-Key"], client.sent[1][3]["Idempotency-Key"])
 
+    def test_a_rate_limited_lookup_is_free_and_tried_again_under_a_new_key(self):
+        limited = (429, {"x-treg-error": "1", "x-treg-call-id": "call_1"}, {"detail": "slow down"})
+        client = FakeClient(limited, reply())
+        with self.ledger() as (path, state):
+            self.assertIsNone(t.bounded_call(client, path, state, t.PROFILE, {"url": "p"}, 4000, lambda data: "found"))
+            self.assertEqual((t.billing(state), t.pending_calls(state)), (0, {}))
+            self.assertEqual(t.bounded_call(client, path, state, t.PROFILE, {"url": "p"}, 4000, lambda data: "found"), "found")
+            self.assertEqual((t.billing(state), len(state["calls"])), (2000, 2))
+        first, second = (sent[3]["Idempotency-Key"] for sent in client.sent)
+        self.assertEqual(second, first + "-r1")
+
     def test_resume_needs_the_same_cap(self):
         with self.ledger():
             pass

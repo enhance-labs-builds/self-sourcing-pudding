@@ -1265,20 +1265,33 @@ def at_employer(company, job):
     return bool(a) and b[:len(a)] == a and compact(brand(longer)) in compact(job["text"])
 
 
+# A leader who says what they run. A co-founder who runs sales is not the owner of an engineering team's tools.
+OTHER_FUNCTIONS = {"revenue": "sales", "sales": "sales", "commercial": "sales", "partnerships": "sales",
+                   "marketing": "marketing", "growth": "marketing", "brand": "marketing",
+                   "financial": "finance", "finance": "finance", "accounting": "finance", "people": "people", "legal": "legal"}
+LEADER_WORDS = {"co", "founder", "cofounder", "ceo", "owner", "president", "executive", "officer", "managing", "director"}
+
+
 def owner_match(role, titles):
     """Return how a current role relates to the titles the agent named for this ad."""
     if re.search(r"\b(?:assistant|intern)\b|\b(?:advis[eo]r|chief of staff) to\b|\b(?:office of|reporting to)\b", role, re.I):
         return None  # "Executive Assistant to the Co-Founder" names a leader without being one.
-    if leaders(role) & set().union(*map(leaders, titles), set()):
-        return "named owner title"
     words = job_board.role_words(role)
+    # A role that names a function the titles don't ("Co-Founder & CRO" for a CTO search) is not matched on its leader words.
+    named = set().union(*map(job_board.role_words, titles), set())
+    elsewhere = {OTHER_FUNCTIONS[word] for word in words & OTHER_FUNCTIONS.keys()} - {OTHER_FUNCTIONS[word] for word in named & OTHER_FUNCTIONS.keys()}
+    if not elsewhere and leaders(role) & set().union(*map(leaders, titles), set()):
+        return "named owner title"
     function = words - job_board.ROLE_LEVEL
-    wanted = [want for title in titles if (want := job_board.role_words(title) - job_board.ROLE_LEVEL)]
+    wanted = [want for title in titles if (want := job_board.role_words(title) - job_board.ROLE_LEVEL)
+              and not (elsewhere and want <= LEADER_WORDS)]
     # "VP Operations" must not match "Head of People Operations": a one-word title has to be the whole function.
     if any(want <= words and (len(want) > 1 or function <= set().union(*wanted)) for want in wanted):
         return "named owner title"
     if any(len(want & function) >= 2 for want in wanted):
         return "same function as the named owner"
+    if elsewhere:
+        return None
     if leaders(role) or "chief" in words and "staff" not in words:  # A chief of staff does not own a team's tools.
         return "company leader, not the named owner"
     return None
@@ -1324,7 +1337,7 @@ def seniority(role):
 
 
 def company_people(call, page, titles, small=False):
-    """LinkedIn's own list of who works at an employer now: the titles named, then its leaders. Best match first."""
+    """LinkedIn's own list of who works at an employer now, the titles named then its leaders: (profile, rank), best first."""
     ranked = {}
     for title in ([None] if small else [*dict.fromkeys(titles)][:2]) + ["Founder", "CEO"]:
         params = {"currentCompany": page, **({"title": title} if title else {}), "page": 1}
@@ -1333,7 +1346,7 @@ def company_people(call, page, titles, small=False):
                 ranked.setdefault(person["profile"], order)
         if any(order[0] == 0 for order in ranked.values()) or title in (None, "Founder") and ranked:
             break  # Someone holds a named title, or a leader has turned up: each further search costs money.
-    return sorted(ranked, key=ranked.get)
+    return sorted(ranked.items(), key=lambda item: item[1])
 
 
 def owner_candidates(call, job, titles, why):
@@ -1353,11 +1366,11 @@ def owner_candidates(call, job, titles, why):
         ranked[person["profile"]] = (False, 2, 2, 0)
     if job.get("company_url"):  # Only an ad from LinkedIn carries the employer's page; a search by name finds namesakes.
         small = ((job.get("employer") or {}).get("employees") or 99) <= 15
-        listed_there = company_people(call, job["company_url"], titles, small)
-        for profile in listed_there:
-            ranked[profile] = (False, 0, 0, len(ranked))  # LinkedIn lists them there now, best match first.
-        if listed_there:
-            return sorted(ranked, key=ranked.get)  # The profile check confirms the title: no need to search the web.
+        for profile, order in company_people(call, job["company_url"], titles, small):
+            ranked[profile] = (False, *order)  # LinkedIn lists them there now.
+        level = min(seniority(title) for title in titles)
+        if any(key[1] == 0 and key[2] <= level for key in ranked.values()):
+            return sorted(ranked, key=ranked.get)  # Someone holds a named title at the level asked: no need to search the web.
     people = call(t.SEMANTIC_PEOPLE, {
         "query": f"Current {', '.join(titles[:4])} at {name}. {why}"[:400], "category": "people", "numResults": 10,
         "includeDomains": ["linkedin.com"]}, lambda data: indexed_people(data, job["company"])) or []
@@ -1433,7 +1446,7 @@ def job_contacts(project, call, per_job, limit=12):
                 break  # Holds a named title at the level asked for. Further lookups would only cost money.
         if (not best or best[3][1] > level) and page and not job.get("company_url"):
             # The searches found colleagues but not the owner, or only someone junior: ask LinkedIn who holds the titles there.
-            for profile in [profile for profile in company_people(call, page, titles) if profile not in {*tried, *seen_before}][:3]:
+            for profile in [profile for profile, _ in company_people(call, page, titles) if profile not in {*tried, *seen_before}][:3]:
                 check(profile)
                 if best and best[3][:2] <= (0, level):
                     break

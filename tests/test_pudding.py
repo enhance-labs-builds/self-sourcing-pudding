@@ -432,8 +432,7 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(pudding.owner_match("CEO/Co-Founder", ["CTO", "CEO"]), "named owner title")
         self.assertEqual(pudding.owner_match("Chief Executive Officer", ["Founder", "CEO"]), "named owner title")
         self.assertEqual(pudding.owner_match("Co-Founder", ["Founder"]), "named owner title")
-        self.assertEqual(pudding.owner_match("Chief Revenue Officer", ["Chief Technology Officer"]),
-                         "company leader, not the named owner")
+        self.assertIsNone(pudding.owner_match("Chief Revenue Officer", ["Chief Technology Officer"]))
         self.assertIsNone(pudding.owner_match("Chief of Staff", ["CTO", "Head of Engineering"]))
         self.assertIsNone(pudding.owner_match("Vice President, Global Solutions Engineering", ["CTO", "VP Engineering"]))
         self.assertEqual(pudding.owner_match("Vice President Engineering", ["CTO", "VP Engineering"]), "named owner title")
@@ -449,9 +448,22 @@ class AgentRunTest(unittest.TestCase):
         self.assertFalse(pudding.at_employer("Pear Games Group", ad))
         self.assertTrue(pudding.at_employer("Plum", {"company": "Plum AI", "text": "We build agents."}))
         self.assertFalse(pudding.at_employer("Harbour 3D", {"company": "Harbour", "text": "Harbour is a finance tool."}))
+        # A co-founder who runs another function is not the owner of an engineering team's tools.
+        technical = ["CTO", "Head of Engineering", "Co-founder"]
+        for role in ("Co-Founder & CRO", "Co-founder, Head of Sales", "Founder | Chief Marketing Officer", "CFO & Co-Founder"):
+            self.assertIsNone(pudding.owner_match(role, technical), role)
+        for role, match in (("Co-Founder & CTO", "named owner title"), ("Co-founder", "named owner title"),
+                            ("Founder & CEO", "named owner title")):
+            self.assertEqual(pudding.owner_match(role, technical), match, role)
+        # The same co-founder is the owner when the buyer is in sales.
+        self.assertEqual(pudding.owner_match("Co-Founder & CRO", ["Head of Revenue Operations", "CRO", "Founder"]), "named owner title")
+        self.assertEqual(pudding.owner_match("Co-Founder & CRO", ["VP Sales", "Founder"]), "named owner title")
         # Two co-founders both hold a named title: the one whose title the agent listed first is the owner.
         titles = ["CTO", "Co-founder"]
-        self.assertLess(pudding.owner_order("Co-Founder & CTO", titles), pudding.owner_order("Co-Founder & CRO", titles))
+        self.assertLess(pudding.owner_order("Co-Founder & CTO", titles), pudding.owner_order("Co-Founder & CEO", ["Co-founder"]) + (1,))
+        self.assertIsNone(pudding.owner_order("Co-Founder & CRO", titles))
+        self.assertLess(pudding.owner_order("VP Sales", ["VP Sales", "Founder"]), pudding.owner_order("Co-Founder & CRO", ["VP Sales", "Founder"]))
+        self.assertIsNone(pudding.owner_match("Co-founder, Head of Growth", ["VP Sales", "Founder"]))
         self.assertTrue(pudding.same_employer("Fenwick", "Fenwick Investments GmbH"))
         self.assertEqual(pudding.owner_match("RevOps Manager", ["Head of Revenue Operations"]), "named owner title")
         self.assertFalse(pudding.same_employer("Fig", "Figma"))

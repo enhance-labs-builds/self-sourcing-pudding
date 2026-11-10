@@ -59,6 +59,22 @@ The shortlist is `shortlist.csv` in the run folder. It has each person's name, r
 
 Next time, start with `--previous`. Pudding leaves out everyone you have seen and shows the agent what you said yes and no to. Add `--suppress` with a list of LinkedIn profile links, work emails, domains or company names to leave out people already in your pipeline.
 
+## We ran it on ourselves
+
+We make a review tool for coding agents. Pudding found 52 people worth contacting, for US$0.65.
+
+Five of them:
+
+- A co-founder whose open pull requests were growing faster than the team could review them.
+- A CTO who measured how many changes still needed a fix after passing every check.
+- A founder who stopped reading code line by line and now verifies by using the product.
+- An engineering manager who rebuilt review because agents open pull requests all day.
+- A CEO with under ten engineers and more changed code each week than anyone could read.
+
+**Then we checked it.** A second model saw only each person's role, employer and quote. It would message 14 of the 17 graded strong, and 1 of the 32 graded low fit. Sixteen of the 52 were already on our own prospect list.
+
+**Then we stopped checking.** We read the first few, they were right, and outbound forgives a wrong name.
+
 ## What to expect
 
 Three full runs on real companies, each read and graded by Claude following the playbook:

@@ -1,6 +1,8 @@
-# Self-Sourcing Pudding
+<p align="center">
+  <img src="docs/pudding.webp" alt="Self-Sourcing Pudding: a felt pudding holding a pair of binoculars" width="200">
+</p>
 
-**Find the people already talking about the problem you solve.**
+<p align="center"><strong>Find the people already talking about the problem you solve.</strong></p>
 
 Give your coding agent your company URL and a sentence about who buys from you. It searches LinkedIn, X and job ads for people describing that problem in their own words, checks who they are and where they work now, and brings back a shortlist. You go through it and say yes or no to each person.
 

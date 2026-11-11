@@ -32,6 +32,7 @@ BUYER_WEB = "serper.web.search"
 WORK_EMAIL = "anyapi.linkedin.email.work.find"
 VERIFY_EMAIL = "hunter.people.email.verify"
 FUNDING = "aviato.companies.funding_rounds"
+FUNDING_PAGE = 10  # Rounds asked for per company. A company with this many may have more.
 EMAIL_ENDPOINTS = (COMPANY, WORK_EMAIL, VERIFY_EMAIL)
 METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WORK_EMAIL: "POST", VERIFY_EMAIL: "GET",
            LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST", X_QUOTES: "GET", X_PROFILE: "POST", SEMANTIC_PEOPLE: "POST",
@@ -523,7 +524,9 @@ def linkedin_job(data):
 
 def funding_rounds(data):
     """A company's announced rounds, reduced to what says how big a deal it could be."""
-    rounds = [row for row in (data.get("fundingRounds") or []) if isinstance(row, dict)]
+    if not isinstance(data.get("fundingRounds"), list):
+        return None  # Not the answer expected: better no answer than a company wrongly shown as unfunded.
+    rounds = [row for row in data["fundingRounds"] if isinstance(row, dict)]
     rounds.sort(key=lambda row: str(row.get("announcedOn") or ""), reverse=True)
     raised = sum(row["moneyRaised"] for row in rounds if isinstance(row.get("moneyRaised"), (int, float)))
     latest = rounds[0] if rounds else {}

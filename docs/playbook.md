@@ -160,16 +160,16 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 | `customer` | They already use the product. |
 | `churned` | They left the product. |
 | `built_own` | They replaced the category with something they built. |
-| `borderline` | Firsthand but off to one side: client work, a hobby build, a tangent. |
+| `borderline` | Firsthand but off to one side: a client's problem rather than their own, a hobby build, a tangent. |
 | `no` | Everything else. |
 
-**Fit decides who the reviewer sees first.** `strong` is someone the user would want to talk to this week: the right buyer, describing this problem now, and not yet committed to another answer. Someone who finished switching last month is `look` at best. `look` is worth a look. `low` goes in its own section: use it for someone who has just committed to a competitor, runs a vertical tool, or sits outside the buyer.
+**Fit says how strong the evidence is, and with the account grade it decides who the reviewer sees first.** `strong` is someone the user would want to talk to this week: the right buyer, describing this problem now, and not yet committed to another answer. Someone who finished switching last month is `look` at best. `look` is worth a look. `low` goes in its own section: use it for someone who has just committed to a competitor, runs a vertical tool, or sits outside the buyer.
 
-**Mark who is deciding now.** Add `"buying_now": true` when their own words say a purchase decision is open: they are choosing or comparing tools, asking for recommendations, a renewal is coming, or they say they would switch. It moves them up the shortlist, so keep it rare: a few people in a run, not a quarter of it. Building something in-house, a complaint, or a plan with no tool to choose is not buying now.
+**Mark who is deciding now.** Add `"buying_now": true` when their own words say a purchase decision is open: they are choosing or comparing tools, asking for recommendations, a renewal is coming, or they say they would switch. It moves them up the shortlist. Building something in-house, a complaint, or a plan with no tool to choose is not buying now. Expect a handful in a run: if a quarter of your prospects are buying now, you are reading it too loosely.
 
 **Note who they point at.** When a post credits a colleague at the same company for this work, such as "our founding engineer Ada Example wrote up how we test", add `"named": ["Ada Example"]`: full names only, three at most. `verify` looks each one up. Leave out people at other companies, customers, and anyone thanked in passing.
 
-**Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell a competing product, sell services around this category's tools, or recruit for it. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
+**Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell a competing product or recruit for this category. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
 
 A short reply can be a prospect if it describes the author's own work. Agreement, advice and a job title are not evidence.
 
@@ -281,7 +281,7 @@ An ad from LinkedIn shows the employer's size, industry and description, and the
 python3 pudding.py --project DIR contacts
 ```
 
-`contacts` finds who owns the work today for the twelve best `strong` and `look` ads (`--limit` raises that; the lookups are the dear part of a run), in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. If the search finds only colleagues or someone junior, it follows a colleague's profile to the employer's LinkedIn page and asks for the title holders there. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
+`contacts` finds who owns the work today for the twelve best `strong` and `look` ads (`--limit` raises that; the lookups are the dear part of a run), in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. If the search finds only colleagues or someone junior, it follows a colleague's profile to the employer's LinkedIn page and asks for the title holders there. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open, unless the ad itself has the hire choose a tool.
 
 ## 5. Put the best accounts first
 
@@ -289,9 +289,9 @@ python3 pudding.py --project DIR contacts
 python3 pudding.py --project DIR accounts
 ```
 
-Everyone verified stays on the list. This step decides who comes first. `accounts` looks up each employer's LinkedIn record (its type, size, followers and founding year) and writes `accounts-sheet.md`: every company, then every person with their audience, how long they have held the role and where they worked before. Add `--funding` when `ideal_account` turns on funding, as it does for a seller to funded startups. It costs about a cent per company. Leave it off for a seller to small businesses, where funding says little.
+Everyone verified stays on the list. This step decides who comes first. `accounts` looks up each employer's LinkedIn record (its type, size, followers and founding year) and writes `accounts-sheet.md`: every company, then every person with their audience, how long they have held the role and where they worked before. Add `--funding` when `ideal_account` turns on funding, as it does for a seller to funded startups. It costs about a cent per company, which a run near its cap cannot cover: run `status` first, and if the cap is short, tell the user what it would cost and let them decide. Leave it off for a seller to small businesses, where funding says little.
 
-Grade both into `accounts.json`:
+Grade both into `accounts.json`. On a follow-up run the file already holds last run's company grades: add to it, and regrade a company only if `ideal_account` or the facts have changed.
 
 ```json
 {
@@ -302,25 +302,26 @@ Grade both into `accounts.json`:
   "people": {
     "P0012": {"reach": "A", "role": "connector", "why": "Fractional CRO to a dozen startups; 14k followers in sales ops."},
     "J004": {"reach": "C", "role": "buyer", "new_role": true, "why": "Joined as Head of RevOps in September."},
-    "P0031": {"reach": "B", "role": "buyer", "account": "A", "why": "No company page: a stealth team with a known founder."}
+    "P0031": {"reach": "B", "role": "buyer", "account": "A", "why": "No company page: a stealth team with a known founder."},
+    "P0012.1": {"reach": "C", "role": "buyer", "warning": "Two people share this name at the company."}
   }
 }
 ```
 
-Companies are keyed by the name in their LinkedIn page address, as the sheet shows. People are keyed by their post or job ad ID.
+Companies and people are keyed by the IDs the sheet shows: the name in a company's LinkedIn page address, and a person's post or job ad ID. An entry point carries its colleague's ID and a number, such as `P0012.1`.
 
-**Grade each company against `ideal_account`, not against size.** A is an account that would matter to this business: the deal, the logo or the reach the seller wants. B is an ordinary fit. C is a weak one: a one-person shop, the wrong segment, a company in trouble. For a seller of enterprise software, a public company or a well-funded scale-up is an A. For a seller to small owner-led firms, that scale-up is a C and the 12-person firm is an A. Look past LinkedIn's record where it misleads: a brand inside a larger group, a stealth team with a known founder, a company type that is plainly wrong.
+**Grade each company against `ideal_account`, not against size.** A is an account that would matter to this business: the deal, the logo or the reach the seller wants. B is an ordinary fit. C is a weak one: a one-person shop, a segment the seller cares little about, a company in trouble. A company that could never buy was already graded `low` or `no`. For a seller of enterprise software, a public company or a well-funded scale-up is an A. For a seller to small owner-led firms, that scale-up is a C and the 12-person firm is an A. Look past LinkedIn's record where it misleads: a brand inside a larger group, a stealth team with a known founder, a company type that is plainly wrong.
 
 **Grade each person's reach.** Count LinkedIn and X followers together. A is 10,000 or more followers drawn from the seller's buyers, a senior track record at companies people know, or advising or investing across many relevant teams. B is a few thousand relevant followers, or one notable senior role. C is everyone else. An audience in another field counts for little. An internship, a short stint, or a claim in the headline that the past roles don't show counts for nothing.
 
 - `role`: `buyer` buys for their own team. `connector` reaches buyers instead of being one: fractional leaders, advisors, investors, agency and studio owners. `both` buys for a team of their own and also reaches buyers: a connector with a team, or someone whose own audience is the seller's buyers, such as a developer advocate or a creator. Reach counts in full for `connector` and `both`; for a `buyer` it breaks ties.
 - `new_role`: for someone the sheet marks NEW ROLE, `true` when the new role puts them in charge of this decision at an existing company: a new leader, a promotion into one, or a hire brought in to choose the tooling. Their own new consultancy or side project is not.
 - `account` on a person: the account grade when they have no company page, when LinkedIn matched the wrong company, or when the company grade is wrong for them. A junior employee at a large company can't bring the account in alone: give them the grade of the deal they could start, often B. Start their `why` with the account reason: the shortlist shows it beside the grade.
-- `check`: a warning for their row, such as a job ad matched to a different company with the same name, or a contact from `contacts` who doesn't own the work, such as a CEO from another function.
+- `warning`: a note for the reviewer on their row, such as a job ad matched to a different company with the same name, or a contact from `contacts` who doesn't own the work, such as a CEO from another function.
 
 Grade every company and every person. An ungraded company counts as B and an ungraded person as C reach, and someone with no employer at all as a C account, so a partly graded file still works. Run `check` after writing it.
 
-**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted this week, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is on the list. Colleagues sit together under their company's best row, whatever their fit, and an entry point counts as worth a look. Low fit keeps its own section, ordered the same way.
+**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted in the week before the run, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is worth contacting too. Colleagues sit together under their company's best row, and an entry point counts as worth a look. Low fit keeps its own section, ordered the same way.
 
 ## 6. Shortlist and review
 
@@ -331,9 +332,9 @@ python3 pudding.py --project DIR review
 
 `shortlist.md` leads with the people worth contacting, best accounts and people deciding now first. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person in the same order, with `fit`, `account`, `account_why`, `reach` and `priority` columns and their employer's size and industry.
 
-`review` opens a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. Tell the user the address it prints and leave it running.
+`review` serves a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. It runs until stopped, so start it in the background, tell the user the address it prints, and leave it running.
 
-Report the number worth contacting, not the total verified, and give named colleagues as a separate number. When two people at one small company are on the list, suggest the user writes to one at a time, starting with whoever is closest to the problem. Give the funnel and the spend, and say plainly what was not covered.
+Report the number worth contacting, not the total verified, and give entry points as a separate number. When two people at one small company are on the list, suggest the user writes to one at a time, starting with whoever is closest to the problem. Give the funnel and the spend, and say plainly what was not covered.
 
 ## 7. Work email
 

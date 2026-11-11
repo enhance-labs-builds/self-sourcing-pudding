@@ -31,7 +31,7 @@ def post(number, author, headline, text, channel="linkedin"):
 POSTS = [
     post(1, "Nia Alder", "Head of Procurement at Juniper Vale Software",
          "I run procurement intake at Juniper Vale. Purchase approvals kept getting stuck between Slack and a spreadsheet, "
-         "so we piloted one request form with finance and IT last week."),
+         "so we piloted one request form with finance and IT last week. Our systems lead Owen Pike built it."),
     post(2, "Priya Rowan", "Procurement Operations Manager at Ashmere Hospitality",
          "Our approvals contract is up for renewal in March and we're evaluating alternatives. "
          "Suppliers still send tax forms to three different inboxes."),
@@ -46,6 +46,7 @@ POSTS = [
 ]
 GRADES = {
     "P0001": {"verdict": "prospect", "fit": "strong", "why": "Owns procurement intake and is changing it now.",
+              "named": ["Owen Pike"],
               "quote": "Purchase approvals kept getting stuck between Slack and a spreadsheet, so we piloted one request form "
                        "with finance and IT last week."},
     "P0002": {"verdict": "prospect", "fit": "strong", "why": "Owns vendor onboarding and is choosing a replacement before a renewal.",
@@ -62,7 +63,7 @@ GRADES = {
 JOB = {"id": "J001", "url": "https://jobs.example/hollis-bay-health/procurement-systems-lead", "company": "Hollis Bay Health",
        "title": "Procurement Systems Lead", "published_on": "2026-10-21", "found_by": ["procurement systems purchase approvals"],
        "text": "You will choose and roll out our first purchase-approvals system and own it afterwards."}
-JOB_GRADES = {"J001": {"verdict": "mandate", "fit": "look", "labels": ["vendor not chosen"],
+JOB_GRADES = {"J001": {"verdict": "mandate", "fit": "look", "labels": ["vendor not chosen"], "buying_now": True,
                        "quote": "You will choose and roll out our first purchase-approvals system",
                        "owner_titles": ["Head of Procurement"], "why": "The ad assigns choosing an approvals system to this hire."}}
 
@@ -87,6 +88,11 @@ PEOPLE = {
     "P0001": entry(0, person("Nia Alder", "Head of Procurement", "Juniper Vale Software", "Leeds, United Kingdom", "GB"),
                    work_email={"status": "verified", "address": "nia.alder@junipervale.example"}, company_domain="junipervale.example",
                    employer=employer(140, "Software Development", "Scheduling software for clinics.")),
+    # Nia's post credits a colleague, so verify added him beside her as an entry point.
+    "P0001.1": entry(0, person("Owen Pike", "Procurement Systems Lead", "Juniper Vale Software", "Leeds, United Kingdom", "GB"),
+                     channel="named", thread_of="P0001", identity_basis="named in Nia Alder's post",
+                     employer=employer(140, "Software Development", "Scheduling software for clinics.")) | {
+                         "profile_url": "https://profiles.example/owen"},
     "P0002": entry(1, person("Priya Rowan", "Procurement Operations Manager", "Ashmere Hospitality", "Austin, Texas", "US"),
                    employer=employer(620, "Hospitality", "Boutique hotels in eleven cities.")),
     "P0003": entry(2, person("Mara Holt", "Procurement Operations Manager", "Oriole Dune Robotics", "Toronto, Canada", "CA"),
@@ -106,13 +112,14 @@ PEOPLE = {
 # The agent's account grades: they decide the order. Nobody is removed.
 ACCOUNTS = {
     "companies": {
-        "hollis": {"grade": "A", "why": "A 1,900-person hospital group choosing its first approvals system."},
+        "hollis": {"grade": "A", "why": "A 1,900-person hospital group: a large account in range."},
         "ashmere": {"grade": "A", "why": "A 620-person hotel group in eleven cities, with a procurement team."},
         "juniper": {"grade": "B", "why": "A 140-person software company: a solid, ordinary fit."},
         "oriole": {"grade": "B", "why": "An 85-person robotics firm: small, but buys like a larger one."},
-        "brindle": {"grade": "C", "why": "Just moved approvals into its ERP."}},
+        "brindle": {"grade": "B", "why": "A 2,300-person freight group: the right size, an ordinary fit."}},
     "people": {
         "P0001": {"reach": "B", "role": "buyer", "why": "Speaks at procurement meetups; about 4,000 followers in the field."},
+        "P0001.1": {"reach": "C", "role": "buyer", "why": "Built the form; no audience to speak of."},
         "J001": {"reach": "C", "role": "buyer", "new_role": True, "why": "Started as Head of Procurement in September."}}}
 
 

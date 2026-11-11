@@ -1527,7 +1527,7 @@ class AgentRunTest(unittest.TestCase):
         sheet = (self.project / "accounts-sheet.md").read_text()
         self.assertIn("### fig · Fig, Inc.", sheet)
         self.assertIn("Privately Held · 59 people on LinkedIn · 4,100 LinkedIn followers · founded 2021", sheet)
-        self.assertIn("Funding: 2 rounds, US$15.0M in total; latest Series A on 2026-06-01", sheet)
+        self.assertIn("Funding: 2 rounds, US$15.0M disclosed; latest Series A on 2026-06-01", sheet)
         self.assertIn("Audience: 12,000 LinkedIn followers · LinkedIn creator", sheet)
         self.assertIn("In this role since Sep 2026. NEW ROLE", sheet)
         self.assertIn("Ideal account: Funded software companies", sheet)
@@ -1543,7 +1543,8 @@ class AgentRunTest(unittest.TestCase):
             {"stage": "Seed", "announcedOn": "2024-01-01T00:00:00Z", "moneyRaised": 2_000_000},
             {"stage": "Series B", "announcedOn": "2026-08-01T00:00:00Z", "moneyRaised": None}]}),
             {"rounds": 2, "raised_usd": 2_000_000, "latest_stage": "Series B", "latest_on": "2026-08-01", "latest_usd": None})
-        self.assertEqual(t.funding_rounds({})["rounds"], 0)
+        self.assertEqual(t.funding_rounds({"fundingRounds": []})["rounds"], 0)
+        self.assertIsNone(t.funding_rounds({"error": "not the answer expected"}))  # Never a company wrongly shown as unfunded.
 
     def test_profiles_keep_reach_and_when_the_role_began(self):
         data = profile([{"position": "CTO", "companyName": "Fig", "startDate": {"text": "Oct 2026"}}],
@@ -1678,6 +1679,139 @@ class AgentRunTest(unittest.TestCase):
         for names in (["@bea"], ["Bea"], ["Ann Example", "Bea Example", "Cal Example", "Dee Example"]):
             with self.assertRaisesRegex(ValueError, "named must be a list of up to three full names"):
                 self.ranked_run([("P0001", "strong", "CEO", "Fig", page, {"named": names})])
+
+    def test_a_broken_accounts_file_never_hides_the_list(self):
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", "https://www.linkedin.com/company/fig")])
+        (self.project / "accounts.json").write_text('{"companies": {"fig": {"grade": "A+"}}}')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pudding.shortlist(self.project)
+        self.assertIn("Note: accounts.json was not used", out.getvalue())
+        self.assertIn("1 worth contacting (1 strong)", out.getvalue())
+        self.assertEqual(pudding.funnel(self.project)["Worth contacting"], 1)
+        later = self.project / "later"
+        later.mkdir()
+        pudding.carry_over(later, self.project)  # A follow-up starts without last run's broken grades.
+        self.assertFalse((later / "accounts.json").exists())
+
+    def test_new_csv_columns_come_after_the_ones_people_already_use(self):
+        before = ("fit", "kind", "name", "first_name", "last_name", "role", "company", "company_url", "company_domain",
+                  "company_size", "company_industry", "company_about", "location", "country", "profile_url", "x_handle",
+                  "role_basis", "identity_basis", "channel", "source_url", "published_on", "found_by", "run_date", "id",
+                  "quote", "why", "labels", "other_sources", "your_answer", "your_note", "work_email", "work_email_status")
+        self.assertEqual(pudding.CSV_FIELDS[:len(before)], before)
+        self.assertEqual(pudding.CSV_FIELDS[len(before):], ("account", "account_why", "reach", "priority"))
+
+    def test_executives_by_any_spelling_rank_as_executives(self):
+        for role in ("CTO", "CFO", "Chief Technology Officer", "Co-Founder & CTO", "Owner", "Managing Partner", "Managing Director",
+                     "VP Engineering", "Head of Sales"):
+            self.assertEqual(pudding.seniority(role), 0, role)
+        for role, level in (("Product Owner", 3), ("Partner Manager", 2), ("Engineering Manager", 2), ("Director of Sales", 1),
+                            ("Software Engineer", 3)):
+            self.assertEqual(pudding.seniority(role), level, role)
+
+    def test_a_date_that_is_not_a_date_never_stops_the_shortlist(self):
+        page = "https://www.linkedin.com/company/fig"
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", page), ("P0002", "look", "CTO", "Pear", page + "2")])
+        posts = json.loads((self.project / "posts.json").read_text())
+        posts["P0001"]["published_on"], posts["P0002"]["published_on"] = "2026-10-1", "last week"
+        self.write("posts.json", posts)
+        rows = pudding.shortlist_rows(self.project)[0]
+        self.assertEqual([row["key"] for row in rows], ["P0001", "P0002"])
+        pudding.shortlist(self.project)
+        self.assertEqual(pudding.day("2026-11-05T09:00:00Z"), pudding.date(2026, 11, 5))
+
+    def test_a_funding_lookup_with_no_answer_is_never_shown_as_unfunded(self):
+        page = "https://www.linkedin.com/company/fig"
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", page)])
+        company = {"element": {"linkedinUrl": page, "name": "Fig, Inc.", "employeeCount": 59}}
+        call = lambda endpoint, params, transform: transform(company) if endpoint == t.COMPANY else None
+        pudding.accounts(self.project, call, funding=True)
+        sheet = (self.project / "accounts-sheet.md").read_text()
+        self.assertIn("Funding: no answer. Treat it as unknown, not as unfunded.", sheet)
+        self.assertNotIn("no rounds on record", sheet)
+        self.assertNotIn("funding", json.loads((self.project / "companies.json").read_text())["fig"])
+        many = {"fundingRounds": [{"stage": "Seed", "announcedOn": f"20{n:02d}-01-01"} for n in range(10, 10 + t.FUNDING_PAGE)]}
+        pudding.accounts(self.project, lambda endpoint, params, transform: transform(company if endpoint == t.COMPANY else many), True)
+        self.assertIn(f"Funding: {t.FUNDING_PAGE} or more rounds, amounts not disclosed; latest Seed on 2019-01-01",
+                      (self.project / "accounts-sheet.md").read_text())
+
+    def test_a_persons_reach_reason_is_not_shown_as_the_account_reason(self):
+        self.ranked_run([("P0001", "look", "Advisor", "Fig", "https://www.linkedin.com/company/fig"),
+                         ("P0002", "look", "Founder", "Pear", None)],
+                        {"companies": {}, "people": {"P0001": {"reach": "A", "role": "connector", "why": "Known advisor."},
+                                                     "P0002": {"reach": "C", "account": "A", "why": "A stealth team with a known founder."}}})
+        rows = {row["key"]: row for row in pudding.shortlist_rows(self.project)[0]}
+        self.assertEqual((rows["P0001"]["account"], rows["P0001"]["account_why"]), ("B", ""))
+        self.assertEqual((rows["P0002"]["account"], rows["P0002"]["account_why"]), ("A", "A stealth team with a known founder."))
+
+    def test_colleagues_are_people_at_one_real_company(self):
+        stealth = "https://www.linkedin.com/company/stealth"
+        order = self.ranked_run([("P0001", "look", "Founder", "Stealth", stealth), ("P0002", "look", "Founder", "Stealth", stealth),
+                                 ("P0003", "look", "Founder", "Fig", "https://www.linkedin.com/company/fig-hq"),
+                                 ("P0004", "look", "Engineer", "Fig", None)])
+        rows = {row["key"]: row for row in pudding.shortlist_rows(self.project)[0]}
+        self.assertEqual(rows["P0001"]["priority"], rows["P0002"]["priority"])
+        self.assertEqual(rows["P0003"]["priority"] - rows["P0001"]["priority"], 0.5)  # Two at Fig; two strangers in stealth.
+        self.assertEqual(order.index("P0004"), order.index("P0003") + 1)  # Without a company page, still beside a colleague.
+
+    def test_an_entry_point_sits_under_the_colleague_who_named_them_and_goes_when_unnamed(self):
+        page = "https://www.linkedin.com/company/fig"
+        self.ranked_run([("P0001", "look", "Software Engineer", "Fig", page, {"named": ["Person boss"]}),
+                         ("P0002", "look", "Founder", "Pear", page + "2")])
+        people = json.loads((self.project / "people.json").read_text())
+        people["P0001.1"] = {"channel": "named", "thread_of": "P0001", "source_url": people["P0001"]["source_url"], "hold": None,
+                             "profile_url": "https://www.linkedin.com/in/boss", "identity_basis": "named in Person p0001's post",
+                             "verified": {"name": "Person Boss", "role": "Head of Engineering", "company": "Fig", "company_url": page,
+                                          "role_basis": "current role", "other_roles": []}}
+        self.write("people.json", people)
+        rows = pudding.shortlist_rows(self.project)[0]
+        # More senior than the colleague who named them, yet they follow that colleague and do not lift the account.
+        self.assertEqual([(row["key"], row["priority"]) for row in rows], [("P0002", 4.0), ("P0001", 3.75), ("P0001.1", 4.5)])
+        grades = json.loads((self.project / "grades.json").read_text())
+        grades["P0001"]["named"] = []  # The agent takes the name back.
+        self.write("grades.json", grades)
+        self.assertEqual([row["key"] for row in pudding.shortlist_rows(self.project)[0]], ["P0002", "P0001"])
+        grades["P0001"].update(named=["Person Boss"], fit="low")  # Their colleague becomes a weak match.
+        self.write("grades.json", grades)
+        self.assertEqual([row["key"] for row in pudding.shortlist_rows(self.project)[0]], ["P0002", "P0001"])
+        self.assertEqual(pudding.funnel(self.project)["Low fit"], 1)
+
+    def test_a_named_colleague_costs_two_profile_checks_at_most(self):
+        hits = [{"link": f"https://www.linkedin.com/in/bea-namesake{n}", "title": "Bea Example - Fig | LinkedIn"} for n in range(5)]
+        call, calls = self.named_world(hits)
+        real = call
+
+        def strangers(endpoint, params, transform):  # Every result is someone else called Bea, at Plum.
+            if endpoint == t.PROFILE and "namesake" in params["url"]:
+                return real(endpoint, {"url": "https://www.linkedin.com/in/bea-namesake"}, lambda data: transform(
+                    {"element": {**data["element"], "linkedinUrl": params["url"]}}))
+            return real(endpoint, params, transform)
+
+        pudding.verify(self.project, strangers, 5)
+        self.assertEqual(sum(endpoint == t.PROFILE for endpoint, _ in calls), 1 + 2)  # The prospect, then two tries.
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertEqual((people["P0001"]["named_checked"], [key for key in people if "." in key]), (["Bea Exámple"], []))
+
+    def test_no_colleagues_are_looked_up_for_a_customer(self):
+        call, calls = self.named_world([{"link": "https://www.linkedin.com/in/bea", "title": "Bea Example - Plum Labs | LinkedIn"}],
+                                       company="Plum Labs")
+        pudding.verify(self.project, call, 5)
+        self.assertNotIn(t.BUYER_WEB, [endpoint for endpoint, _ in calls])
+
+    def test_names_in_another_script_are_compared_as_written(self):
+        self.assertTrue(pudding.same_person("Анна Иванова", "анна иванова"))
+        self.assertFalse(pudding.same_person("Анна Иванова", "Ольга Петрова"))
+        self.assertTrue(pudding.same_person("Bea Exámple, PhD 💙", "bea example"))
+
+    def test_check_names_account_grades_that_match_nobody(self):
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", "https://www.linkedin.com/company/fig")],
+                        {"companies": {"fig": {"grade": "A", "why": "Series A."}, "figg": {"grade": "A", "why": "A typo."}},
+                         "people": {"P0009": {"reach": "A"}}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertFalse(pudding.main(["--project", str(self.project), "check"]))
+        self.assertIn("accounts.json grades 2 IDs that are not on the list, so they change nothing: P0009, figg.", out.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

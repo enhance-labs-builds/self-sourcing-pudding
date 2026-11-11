@@ -49,6 +49,7 @@ GRADES = {
               "quote": "Purchase approvals kept getting stuck between Slack and a spreadsheet, so we piloted one request form "
                        "with finance and IT last week."},
     "P0002": {"verdict": "prospect", "fit": "strong", "why": "Owns vendor onboarding and is choosing a replacement before a renewal.",
+              "buying_now": True,
               "quote": "Our approvals contract is up for renewal in March and we're evaluating alternatives."},
     "P0003": {"verdict": "prospect", "fit": "look", "why": "Owns purchase orders and is testing automation.",
               "quote": "Three teams were rekeying the same request", "labels": ["employer not named in post", "found on X"]},
@@ -102,6 +103,19 @@ PEOPLE = {
 }
 
 
+# The agent's account grades: they decide the order. Nobody is removed.
+ACCOUNTS = {
+    "companies": {
+        "hollis": {"grade": "A", "why": "A 1,900-person hospital group choosing its first approvals system."},
+        "ashmere": {"grade": "A", "why": "A 620-person hotel group in eleven cities, with a procurement team."},
+        "juniper": {"grade": "B", "why": "A 140-person software company: a solid, ordinary fit."},
+        "oriole": {"grade": "B", "why": "An 85-person robotics firm: small, but buys like a larger one."},
+        "brindle": {"grade": "C", "why": "Just moved approvals into its ERP."}},
+    "people": {
+        "P0001": {"reach": "B", "role": "buyer", "why": "Speaks at procurement meetups; about 4,000 followers in the field."},
+        "J001": {"reach": "C", "role": "buyer", "new_role": True, "why": "Started as Head of Procurement in September."}}}
+
+
 def build(folder):
     project = Path(folder)
     write = lambda name, value: t.atomic_json(project / name, value)
@@ -110,6 +124,7 @@ def build(folder):
         "product": "Juniper Approvals, a fictional purchase-approvals tool.", "buyer": "Procurement and finance operations leads.",
         "qualifies": "The author describes their own team's purchase approvals.", "exclude_employers": ["Juniper Approvals"],
         "customers": ["Larkfield Foods"], "employer_topic": "procurement", "owner_titles": ["Head of Procurement"],
+        "ideal_account": "Companies of 100 to 5,000 people with a procurement team, and names other buyers recognise.",
         "seller_terms": ["procurement consulting", "spend management platform"],
         "linkedin_queries": [f'"Tool{n}" "we switched"' for n in range(5)], "x_queries": [], "job_queries": JOB["found_by"]})
     write("posts.json", {row["id"]: row for row in POSTS})
@@ -117,6 +132,7 @@ def build(folder):
     write("jobs.json", {"J001": JOB})
     write("job-grades.json", JOB_GRADES)
     write("people.json", PEOPLE)
+    write("accounts.json", ACCOUNTS)
     write("review.json", {POSTS[0]["profile"]: {"vote": "yes", "note": "Exactly who we sell to."}})
     (project / "ledger").mkdir()
     # Nineteen lookups: two searches, a job search, an owner search, six role checks, five employers and four email calls.

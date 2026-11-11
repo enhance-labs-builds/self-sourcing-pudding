@@ -31,14 +31,15 @@ SEMANTIC_PEOPLE = "exa.people.search"
 BUYER_WEB = "serper.web.search"
 WORK_EMAIL = "anyapi.linkedin.email.work.find"
 VERIFY_EMAIL = "hunter.people.email.verify"
+FUNDING = "aviato.companies.funding_rounds"
 EMAIL_ENDPOINTS = (COMPANY, WORK_EMAIL, VERIFY_EMAIL)
 METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WORK_EMAIL: "POST", VERIFY_EMAIL: "GET",
            LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST", X_QUOTES: "GET", X_PROFILE: "POST", SEMANTIC_PEOPLE: "POST",
-           BUYER_WEB: "POST", JOB_SEARCH: "GET", JOB: "GET", PEOPLE: "GET"}
+           BUYER_WEB: "POST", JOB_SEARCH: "GET", JOB: "GET", PEOPLE: "GET", FUNDING: "GET"}
 # The most a single call may cost, in millionths of a US dollar.
 PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000,
             LINKEDIN_COMMENTS: 5_000, X_REPLIES: 14_000, X_QUOTES: 50_000, X_PROFILE: 2_000, SEMANTIC_PEOPLE: 7_000,
-            BUYER_WEB: 1_000, JOB_SEARCH: 2_000, JOB: 2_000, PEOPLE: 5_000}
+            BUYER_WEB: 1_000, JOB_SEARCH: 2_000, JOB: 2_000, PEOPLE: 5_000, FUNDING: 10_000}
 X_QUOTE_PAGE = 10
 
 
@@ -156,7 +157,7 @@ class Treg:
                 raise ValueError(f"Could not check the current catalog entry for {endpoint}.")
             row = payload.get("endpoint", {})
             price = row.get("cost", {})
-            currencies = {"USD", "credit"} if endpoint in {VERIFY_EMAIL, BUYER_WEB} else {"USD"}
+            currencies = {"USD", "credit"} if endpoint in {VERIFY_EMAIL, BUYER_WEB, FUNDING} else {"USD"}
             unit, types = ("post", {"per_result"}) if endpoint == X_QUOTES else ("call", {"per_call", "per_success"})
             if (row.get("method") != METHODS[endpoint] or row.get("platform_eligible") is not True
                     or row.get("platform_blocked") or price.get("currency") not in currencies
@@ -518,6 +519,17 @@ def linkedin_job(data):
             "employer": {"name": company["name"], "url": None, "employees": count if isinstance(count, int) else None,
                          "industry": industries[0] if industries else "",
                          "about": " ".join(str(company.get("description") or "").split())[:220]}}
+
+
+def funding_rounds(data):
+    """A company's announced rounds, reduced to what says how big a deal it could be."""
+    rounds = [row for row in (data.get("fundingRounds") or []) if isinstance(row, dict)]
+    rounds.sort(key=lambda row: str(row.get("announcedOn") or ""), reverse=True)
+    raised = sum(row["moneyRaised"] for row in rounds if isinstance(row.get("moneyRaised"), (int, float)))
+    latest = rounds[0] if rounds else {}
+    return {"rounds": len(rounds), "raised_usd": int(raised),
+            "latest_stage": str(latest.get("stage") or ""), "latest_on": str(latest.get("announcedOn") or "")[:10],
+            "latest_usd": int(latest["moneyRaised"]) if isinstance(latest.get("moneyRaised"), (int, float)) else None}
 
 
 def linkedin_people(data):

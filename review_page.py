@@ -110,6 +110,7 @@ function draw() {
   card.append(el("p", "role", row.company ? `${row.role}, ${row.company}` : row.role));
   const facts = [row.company_size ? `${Number(row.company_size).toLocaleString()} ${row.company_size == 1 ? "person" : "people"} on LinkedIn` : "", row.company_industry, row.company_about].filter(Boolean);
   if (facts.length) card.append(el("p", "employer", facts.join(" · ")));
+  if (row.account) card.append(el("p", "employer", `${row.account} account${row.account_why ? ": " + row.account_why : ""}`));
   card.append(el("blockquote", "", row.quote));
   card.append(el("p", "why", row.why));
   const links = el("p", "links"); links.append(link("Source", row.source_url));

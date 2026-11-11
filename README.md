@@ -62,6 +62,7 @@ Pudding works best when your buyers write in public, in English, about their wor
 | First run | about US$1 | Paid to Treg. Our first runs spent US$0.70 to US$0.95. |
 | Weekly follow-up | about US$0.40 | Paid to Treg. |
 | Work email | about US$0.03 a person | On top of the run. Thirty people cost about US$1. |
+| Funding rounds | about US$0.01 a company | Optional, for sellers who care about funding. Sixty companies cost about US$0.60. |
 | Your agent | 250,000 to 410,000 tokens on Claude | Counts against your plan like any other long session. |
 
 Treg is prepaid and advertises US$1 of starting credit for new accounts ([pricing](https://treg.to/pricing)). Your Treg balance is the outer limit on spend, so keep a few dollars in it and leave automatic top-ups off.
@@ -108,8 +109,9 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 3. **Verify.** Pudding confirms who each person is and where they work now.
 4. **Profile the employer.** Pudding records each employer's size, industry and one-line description. Your agent drops direct competitors and labels agencies and large companies.
 5. **Read job ads** from LinkedIn, Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. When an ad hands this work to a new hire, Pudding finds whoever owns it today and marks the row as a hiring signal.
-6. **Review.** You answer yes, no or maybe. Low-fit people, existing customers and anyone Pudding couldn't identify sit in separate sections.
-7. **Enrich.** Pudding finds work email for your yes answers.
+6. **Rank.** Your agent grades each employer against the accounts that matter most to you, and each person's reach: their audience, their track record and the teams they advise. The best accounts and people deciding now come first. Nobody is removed.
+7. **Review.** You answer yes, no or maybe. Low-fit people, existing customers and anyone Pudding couldn't identify sit in separate sections.
+8. **Enrich.** Pudding finds work email for your yes answers.
 
 Pudding reads posts from the last 45 days and job ads from the last 90. A job ad with no published date stays in and shows `no date` on your agent's sheet. On our reference run, the typical post was 11 days old and every job ad was under four weeks old.
 
@@ -146,7 +148,7 @@ A second model then saw each person's role, employer and quote, with no grades. 
 
 ### Output
 
-Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; and your answer. The email step adds work email. Filter on `fit` and `your_answer`, and match against your CRM on `profile_url`.
+Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; their account grade, the reason and their reach; and your answer. Rows come best first. The email step adds work email. Filter on `fit` and `your_answer`, and match against your CRM on `profile_url`.
 
 ### Suppression lists
 
@@ -160,7 +162,7 @@ Add `--suppress FILE` to the first run to leave out people you already know. The
 
 ### Treg and data sources
 
-Pudding buys every lookup through Treg. Behind Treg, HarvestAPI supplies LinkedIn data, AnyAPI and the X API supply X data, Serper and Exa supply web search, and AnyAPI and Hunter supply work email.
+Pudding buys every lookup through Treg. Behind Treg, HarvestAPI supplies LinkedIn data, AnyAPI and the X API supply X data, Serper and Exa supply web search, AnyAPI and Hunter supply work email, and Aviato supplies funding rounds.
 
 Your agent installs Treg with its own installer (`curl -fsSL https://treg.to/install.sh | sh`) and signs you in with `treg login`. With a Treg team token, set `TREG_TOKEN` and `TREG_ORG` instead. Pudding refuses a team with its own provider keys connected, so every lookup counts against the cap. One read-only X connection is allowed.
 
@@ -180,6 +182,7 @@ Your agent runs these from [the playbook](docs/playbook.md).
 | `timeline @handle`, `web "query"` | Help place an X author: their recent posts, and a web search. |
 | `spider` | Optional. Read replies under graded posts. |
 | `jobs`, `contacts` | Find job ads, then the person who owns the work. `jobs --lookback-days N` (default 90). |
+| `accounts` | Grade accounts and reach, which set the shortlist's order. `--funding` adds funding rounds. |
 | `shortlist` | Write `shortlist.md` and `shortlist.csv`. |
 | `review` | Start the review page and print its address. |
 | `enrich` | Find work email for your yes answers. |

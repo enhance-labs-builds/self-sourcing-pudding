@@ -21,6 +21,7 @@ PLAN = {
     "buyer": "Founders and revenue operations leads.",
     "qualifies": "The author describes their own team's CRM.",
     "exclude_employers": ["Orbit CRM Inc"], "customers": ["Plum Labs"], "employer_topic": "CRM",
+    "ideal_account": "Funded software companies with a sales team of five or more.",
     "owner_titles": ["Head of Revenue Operations"], "seller_terms": ["CRM consultancy", "CRM implementation"],
     "linkedin_queries": [f'"Tool{n}" "we switched"' for n in range(19)] + ['"Tool1" "our renewal"'],
     "x_queries": [f'"Tool{n}" ("we switched" OR "our team")' for n in range(12)], "job_queries": ['"CRM migration" revops'],
@@ -1209,7 +1210,8 @@ class AgentRunTest(unittest.TestCase):
         pudding.verify(self.project, call, 5)
         people = json.loads((self.project / "people.json").read_text())
         self.assertEqual(people["P0001"]["employer"], {"name": "Fig, Inc.", "url": "https://www.fig.example/", "employees": 59,
-                                                       "industry": "Software Development", "about": "Invoices for small teams."})
+                                                       "industry": "Software Development", "about": "Invoices for small teams.",
+                                                   "type": "", "followers": None, "founded": None})
         self.assertEqual(calls, [t.PROFILE, t.COMPANY])
         pudding.shortlist(self.project)
         with (self.project / "shortlist.csv").open(newline="") as file:
@@ -1430,6 +1432,141 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(page, (root / "examples/shortlist.md").read_text(encoding="utf-8"))
         self.assertEqual(sheet, (root / "examples/shortlist.csv").read_text(encoding="utf-8"))
 
+
+    def ranked_run(self, people, accounts=None):
+        """A verified run: (key, fit, role, company, page) per person, all posted six weeks before the run."""
+        posts, grades, entries = {}, {}, {}
+        for key, fit, role, company, page, *more in people:
+            name = key.lower()
+            posts[key] = {**POST, "id": key, "author": f"Person {name}", "url": f"https://www.linkedin.com/posts/{name}",
+                          "profile": f"https://www.linkedin.com/in/{name}", "headline": role, "published_on": "2026-10-01",
+                          "text": "We switched off Tool1 in March."}
+            grades[key] = {"verdict": "prospect", "fit": fit, "why": "Own team.", "quote": "We switched off Tool1 in March.",
+                           **(more[0] if more else {})}
+            entries[key] = {"channel": "linkedin", "source_url": posts[key]["url"], "hold": None, "profile_url": posts[key]["profile"],
+                            "verified": {"name": f"Person {name}", "role": role, "company": company, "role_basis": "current role",
+                                         "company_url": page, "other_roles": [], "followers": 12000, "creator": True,
+                                         "role_started": "Sep 2026", "past_roles": ["VP Sales, Big Example (3 yrs)"]}}
+        self.write("posts.json", posts)
+        self.write("grades.json", grades)
+        self.write("people.json", entries)
+        if accounts is not None:
+            self.write("accounts.json", accounts)
+        return [row["key"] for row in pudding.shortlist_rows(self.project)[0]]
+
+    def test_accounts_reorder_the_list_without_removing_anyone(self):
+        page = lambda slug: f"https://www.linkedin.com/company/{slug}"
+        order = self.ranked_run([
+            ("P0001", "strong", "Engineer", "Tiny Example", page("tiny")),
+            ("P0002", "look", "Head of Sales", "Big Example", page("big")),
+            ("P0003", "look", "Engineer", "", None),
+            ("P0004", "look", "Fractional CRO", "Solo Example", page("solo")),
+            ("P0005", "look", "Account Executive", "Big Example", page("big")),
+        ], {"companies": {"tiny": {"grade": "C", "why": "One person."}, "big": {"grade": "A", "why": "Series B, 200 people."},
+                          "solo": {"grade": "C", "why": "A one-person practice."}},
+            "people": {"P0004": {"reach": "A", "role": "connector", "why": "Advises a dozen sales teams."}}})
+        # A strong post at a tiny company follows good accounts and a connector; colleagues sit together; no employer goes last.
+        self.assertEqual(order, ["P0002", "P0005", "P0004", "P0001", "P0003"])
+        rows = {row["key"]: row for row in pudding.shortlist_rows(self.project)[0]}
+        self.assertEqual((rows["P0002"]["account"], rows["P0002"]["priority"]), ("A", 5.5))
+        self.assertEqual((rows["P0003"]["account"], rows["P0004"]["priority"]), ("C", 4.0))
+        pudding.shortlist(self.project)
+        page_text = (self.project / "shortlist.md").read_text()
+        self.assertIn("A account: Series B, 200 people.", page_text)
+        with (self.project / "shortlist.csv").open(newline="") as file:
+            first = next(csv.DictReader(file))
+        self.assertEqual((first["account"], first["account_why"], first["priority"]), ("A", "Series B, 200 people.", "5.5"))
+
+    def test_reach_adds_to_any_account_in_full_for_connectors_and_half_for_buyers(self):
+        people = [("P0001", "look", "Founder", "Tiny Example", "https://www.linkedin.com/company/tiny"),
+                  ("P0002", "look", "Founder", "Mid Example", "https://www.linkedin.com/company/mid"),
+                  ("P0003", "look", "DevRel Lead", "Big Example", "https://www.linkedin.com/company/big")]
+        self.assertEqual(len(self.ranked_run(people)), 3)  # Nothing graded: everyone counts as a B account.
+        order = self.ranked_run(people, {
+            "companies": {"tiny": {"grade": "C", "why": "Tiny."}, "mid": {"grade": "B", "why": "Mid."}, "big": {"grade": "A", "why": "Big."}},
+            "people": {"P0001": {"reach": "A", "role": "buyer", "why": "Big audience."},
+                       "P0003": {"reach": "A", "role": "both", "why": "50k followers who are the buyers."}}})
+        rows = {row["key"]: row for row in pudding.shortlist_rows(self.project)[0]}
+        # A big audience still counts at an account that is already an A.
+        self.assertEqual([rows[key]["priority"] for key in ("P0001", "P0002", "P0003")], [3.5, 4.0, 5.4])
+        self.assertEqual((order[0], rows["P0001"]["reach"]), ("P0003", "A buyer"))
+
+    def test_buying_now_and_a_new_role_move_someone_up(self):
+        page = "https://www.linkedin.com/company/same"
+        order = self.ranked_run([("P0001", "strong", "Founder", "One Example", page),
+                                 ("P0002", "look", "Head of Sales", "Two Example", page + "2", {"buying_now": True})],
+                                {"companies": {}, "people": {"P0002": {"reach": "C", "new_role": True, "why": "Joined in September."}}})
+        self.assertEqual(order, ["P0002", "P0001"])
+        labels = pudding.shortlist_rows(self.project)[0][0]["labels"]
+        self.assertEqual(labels[:2], ["buying now", "new in role"])
+        grades = json.loads((self.project / "grades.json").read_text())
+        grades["P0002"]["buying_now"] = "yes"
+        self.write("grades.json", grades)
+        with self.assertRaisesRegex(ValueError, "buying_now must be true or false"):
+            pudding.check_grades(self.project)
+
+    def test_accounts_must_use_a_b_or_c(self):
+        self.write("accounts.json", {"companies": {"fig": {"grade": "A+", "why": "Big."}}, "people": {"P0001": {"reach": "huge"}}})
+        with self.assertRaisesRegex(ValueError, "companies.fig: needs a grade of A, B or C(.|\n)*people.P0001: reach"):
+            pudding.load_accounts(self.project)
+
+    def test_accounts_sheet_shows_what_decides_the_order(self):
+        page = "https://www.linkedin.com/company/fig"
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", page)])
+        company = {"element": {"linkedinUrl": page, "name": "Fig, Inc.", "employeeCount": 59, "followerCount": 4100,
+                               "companyType": "Privately Held", "foundedOn": {"year": 2021}, "tagline": "Invoices."}}
+        funding = {"fundingRounds": [{"stage": "Seed", "announcedOn": "2025-02-01T00:00:00.000Z", "moneyRaised": 3_000_000},
+                                     {"stage": "Series A", "announcedOn": "2026-06-01T00:00:00.000Z", "moneyRaised": 12_000_000}]}
+        calls = []
+
+        def call(endpoint, params, transform):
+            calls.append((endpoint, params))
+            return transform(company if endpoint == t.COMPANY else funding)
+
+        pudding.accounts(self.project, call, funding=True)
+        sheet = (self.project / "accounts-sheet.md").read_text()
+        self.assertIn("### fig · Fig, Inc.", sheet)
+        self.assertIn("Privately Held · 59 people on LinkedIn · 4,100 LinkedIn followers · founded 2021", sheet)
+        self.assertIn("Funding: 2 rounds, US$15.0M in total; latest Series A on 2026-06-01", sheet)
+        self.assertIn("Audience: 12,000 LinkedIn followers · LinkedIn creator", sheet)
+        self.assertIn("In this role since Sep 2026. NEW ROLE", sheet)
+        self.assertIn("Ideal account: Funded software companies", sheet)
+        self.assertIn(pudding.DATA_NOTE, sheet)
+        self.assertEqual([c[0] for c in calls], [t.COMPANY, t.FUNDING])
+        self.assertEqual(calls[1][1], {"linkedinURL": page, "perPage": 10, "page": 1})
+        calls.clear()
+        pudding.accounts(self.project, call, funding=True)  # Facts already kept are not looked up again.
+        self.assertEqual(calls, [])
+
+    def test_funding_rounds_keep_the_total_and_the_latest(self):
+        self.assertEqual(t.funding_rounds({"fundingRounds": [
+            {"stage": "Seed", "announcedOn": "2024-01-01T00:00:00Z", "moneyRaised": 2_000_000},
+            {"stage": "Series B", "announcedOn": "2026-08-01T00:00:00Z", "moneyRaised": None}]}),
+            {"rounds": 2, "raised_usd": 2_000_000, "latest_stage": "Series B", "latest_on": "2026-08-01", "latest_usd": None})
+        self.assertEqual(t.funding_rounds({})["rounds"], 0)
+
+    def test_profiles_keep_reach_and_when_the_role_began(self):
+        data = profile([{"position": "CTO", "companyName": "Fig", "startDate": {"text": "Oct 2026"}}],
+                       experience=[{"position": "CTO", "companyName": "Fig", "endDate": {"text": "Present"}},
+                                   {"position": "VP Engineering", "companyName": "Big Example", "duration": "4 yrs",
+                                    "endDate": {"text": "Sep 2026"}}])
+        data["element"].update(followerCount=15000, creator=True, unrelated="dropped")
+        person = pudding.current_role(pudding.slim_profile(data), "https://www.linkedin.com/in/ada")
+        self.assertEqual((person["followers"], person["creator"], person["role_started"], person["past_roles"]),
+                         (15000, True, "Oct 2026", ["VP Engineering, Big Example (4 yrs)"]))
+        self.assertTrue(pudding.new_in_role(person, pudding.date(2026, 11, 10)))
+        self.assertFalse(pudding.new_in_role({"role_started": "Jan 2024"}, pudding.date(2026, 11, 10)))
+
+    def test_the_next_run_keeps_last_runs_account_grades(self):
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", "https://www.linkedin.com/company/fig")],
+                        {"companies": {"fig": {"grade": "A", "why": "Series A."}}, "people": {"P0001": {"reach": "B"}}})
+        self.write("companies.json", {"fig": {"name": "Fig", "type": "Privately Held"}})
+        later = self.project / "later"
+        later.mkdir()
+        pudding.carry_over(later, self.project)
+        self.assertEqual(json.loads((later / "accounts.json").read_text()),
+                         {"companies": {"fig": {"grade": "A", "why": "Series A."}}, "people": {}})
+        self.assertEqual(json.loads((later / "companies.json").read_text()), {"fig": {"name": "Fig", "type": "Privately Held"}})
 
 if __name__ == "__main__":
     unittest.main()

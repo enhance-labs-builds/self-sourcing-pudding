@@ -94,7 +94,8 @@ GENERIC_EMPLOYER = {"selfemployed", "freelance", "stealth", "stealthstartup", "c
 CSV_FIELDS = ("fit", "kind", "name", "first_name", "last_name", "role", "company", "company_url", "company_domain",
               "company_size", "company_industry", "company_about", "location", "country", "profile_url", "x_handle", "role_basis",
               "identity_basis", "channel", "source_url", "published_on", "found_by", "run_date", "id",
-              "quote", "why", "labels", "other_sources", "your_answer", "your_note", "work_email", "work_email_status")
+              "quote", "why", "labels", "account", "account_why", "reach", "priority", "other_sources", "your_answer",
+              "your_note", "work_email", "work_email_status")
 
 
 def read(path, default=None):
@@ -179,7 +180,7 @@ def ledger(project):
     token, org = credentials()
     client = t.Treg(token, org)
     wanted = (t.LINKEDIN, t.X, t.PROFILE, t.LINKEDIN_COMMENTS, t.X_REPLIES, t.X_PROFILE, t.BUYER_WEB, t.SEMANTIC_PEOPLE,
-              t.JOB_SEARCH, t.JOB, t.PEOPLE, *t.EMAIL_ENDPOINTS)
+              t.JOB_SEARCH, t.JOB, t.PEOPLE, t.FUNDING, *t.EMAIL_ENDPOINTS)
     quotes = client.preflight({t.LINKEDIN, t.X, t.PROFILE}, include_x_quotes=True)
     for endpoint in wanted[3:]:
         try:
@@ -308,6 +309,10 @@ def carry_over(project, previous):
                   for query in plan.get("job_queries", [])]
     save(project / "feedback.md", terminal_text("\n".join([*lines[:3], "", DATA_NOTE, *lines[3:]])) + "\n")  # It quotes strangers' posts.
     # Posts already read and employers whose ads were already read are not read again. An author is: their next post is new.
+    if (previous / "accounts.json").exists():
+        t.atomic_json(project / "accounts.json", {"companies": load_accounts(previous)[0], "people": {}})
+    if (previous / "companies.json").exists():
+        t.atomic_json(project / "companies.json", read(previous / "companies.json", {}))
     t.atomic_json(project / "read-before.json", sorted(
         {t.social_source_key(posts[key]) for key in grades if key in posts} | set(read(previous / "read-before.json", []))))
     t.atomic_json(project / "ads-before.json", sorted(
@@ -451,11 +456,13 @@ def load_plan(project):
             raise ValueError(f"plan.json needs {low} to {high} {key}.")
     if not isinstance(plan.setdefault("employer_topic", ""), str):
         raise ValueError("plan.json employer_topic needs a word or short phrase.")
+    if not isinstance(plan.setdefault("ideal_account", ""), str) or "\n" in plan["ideal_account"]:
+        raise ValueError("plan.json ideal_account needs one sentence on which accounts matter most.")
     return plan
 
 
 PLAN_FIELDS = {"product", "buyer", "qualifies", "exclude_employers", "customers", "owner_titles", "employer_topic",
-               "seller_terms", *LIMITS}
+               "seller_terms", "ideal_account", *LIMITS}
 
 
 def plan_notes(plan, searched=False):
@@ -488,6 +495,9 @@ def plan_notes(plan, searched=False):
         notes.append("Fewer than 12 X queries. An X search costs a twentieth of a cent, so write 12 to 20.")
     if plan["x_queries"] and not any(re.search(r'"(?:our team|we use)"', q, re.I) for q in plan["x_queries"]):
         notes.append('No X query includes a broad phrase such as "our team" or "we use"; narrow X queries often return nothing.')
+    if not plan.get("ideal_account"):
+        notes.append("ideal_account is empty. Say in one sentence which accounts matter most, such as \"funded AI-native "
+                     "startups and well-known software brands\" or \"owner-led firms under 50 people\", so the shortlist puts them first.")
     if not plan.get("customers") and not searched:
         notes.append("customers is empty. List any customers the site names so they are not reported as prospects. "
                      "If it names none, leave it empty.")
@@ -713,6 +723,8 @@ def check_grades(project):
             problems.append(f"{key}: fit must be strong, look or low.")
         if not strings(grade.get("labels", [])):
             problems.append(f"{key}: labels must be a list of short strings.")
+        if not isinstance(grade.get("buying_now", False), bool):
+            problems.append(f"{key}: buying_now must be true or false.")
         if "linkedin" in grade and not named_profile(grade):
             problems.append(f"{key}: linkedin must be a personal profile link such as https://www.linkedin.com/in/name.")
     if problems:
@@ -805,7 +817,7 @@ def slim_profile(data):
     row = data.get("element") or {}
     return {"element": {key: row.get(key) for key in
                         ("firstName", "lastName", "headline", "linkedinUrl", "currentPosition", "experience", "location",
-                         "openToWork")}}
+                         "openToWork", "followerCount", "creator", "influencer")}}
 
 
 def current_role(data, profile):
@@ -820,7 +832,13 @@ def current_role(data, profile):
     extra = {"first_name": row.get("firstName") or "", "last_name": row.get("lastName") or "",
              "location": place.get("linkedinText") or "", "country": place.get("countryCode") or "",
              # LinkedIn's #OpenToWork frame, or the same said in the headline.
-             "open_to_work": row.get("openToWork") is True or bool(OPEN_TO_WORK.search(row.get("headline") or ""))}
+             "open_to_work": row.get("openToWork") is True or bool(OPEN_TO_WORK.search(row.get("headline") or "")),
+             # Reach: who listens to them, and where they have worked. It ranks people; it never removes anyone.
+             "followers": row["followerCount"] if isinstance(row.get("followerCount"), int) else None,
+             "creator": row.get("creator") is True or row.get("influencer") is True,
+             "past_roles": [f"{r['position']}, {r['companyName']}" + (f" ({r['duration']})" if r.get("duration") else "")
+                            for r in row.get("experience") or [] if r.get("position") and r.get("companyName")
+                            and str((r.get("endDate") or {}).get("text", "")).casefold() != "present"][:6]}
     roles = [r for r in row.get("currentPosition") or []
              if r.get("position") and r.get("companyName") and not (r.get("endDate") or {}).get("year")]
     basis = "current role" if len(roles) == 1 else f"{len(roles)} concurrent roles"
@@ -829,6 +847,7 @@ def current_role(data, profile):
                  and str((r.get("endDate") or {}).get("text", "")).casefold() == "present"]
         basis = "experience marked present"
     if roles:
+        extra["role_started"] = str((roles[0].get("startDate") or {}).get("text") or "")
         return {"name": name, "role": roles[0]["position"], "company": roles[0]["companyName"], "role_basis": basis,
                 "company_url": t.linkedin_url(roles[0].get("companyLinkedinUrl"), "company"),
                 "other_roles": [f"{r['position']}, {r['companyName']}" for r in roles[1:3]], **extra}
@@ -852,10 +871,13 @@ def employer_record(data, company_url):
     except ValueError:
         site = None
     industries = [row.get("name") for row in company.get("industries") or [] if isinstance(row, dict) and row.get("name")]
-    count = company.get("employeeCount")
+    count, followers = company.get("employeeCount"), company.get("followerCount")
+    founded = (company.get("foundedOn") or {}).get("year") if isinstance(company.get("foundedOn"), dict) else None
     return {"name": company.get("name") or "", "url": site, "employees": count if isinstance(count, int) else None,
             "industry": industries[0] if industries else "",
-            "about": " ".join(str(company.get("tagline") or company.get("description") or "").split())[:220]}
+            "about": " ".join(str(company.get("tagline") or company.get("description") or "").split())[:220],
+            "type": str(company.get("companyType") or ""), "followers": followers if isinstance(followers, int) else None,
+            "founded": founded if isinstance(founded, int) else None}
 
 
 def employer(call, person):
@@ -878,10 +900,12 @@ def x_account(call, handle, name=""):
     """What an X account says about its owner: the profile, and the website it links to."""
     profile = call(t.X_PROFILE, {"handle": handle}, lambda data: {
         key: ((data.get("output") or {}).get("data") or {}).get(key)
-        for key in ("handle", "displayName", "bio", "description", "website")}) or {}
+        for key in ("handle", "displayName", "bio", "description", "website", "followers")}) or {}
     bio = norm(" ".join(filter(None, [profile.get("bio"), profile.get("description")])))
     account = {"handle": handle, "name": norm(re.sub(r"[^\w\s'.-]", "", profile.get("displayName") or name or "")),
-               "bio": bio, "website": profile.get("website") or "", "site": "", "site_text": "", "site_links": [],
+               "bio": bio, "website": profile.get("website") or "",
+               "followers": profile["followers"] if isinstance(profile.get("followers"), int) else None,
+               "site": "", "site_text": "", "site_links": [],
                "links": sorted(t.linkedin_links([profile.get("website"), *re.findall(LINKEDIN_PERSON, bio)]))}
     if account["website"] and not account["links"]:
         try:
@@ -1258,6 +1282,8 @@ def check_job_grades(project):
                 problems.append(f"{key}: add owner_titles and one sentence on why.")
             if grade.setdefault("fit", "look") not in FITS or not strings(grade.get("labels", [])):
                 problems.append(f"{key}: fit must be strong, look or low, and labels a list.")
+            if not isinstance(grade.get("buying_now", False), bool):
+                problems.append(f"{key}: buying_now must be true or false.")
     if problems:
         raise ValueError("Fix job-grades.json:\n  " + "\n  ".join(problems))
     return jobs, grades
@@ -1583,6 +1609,192 @@ def enrich(project, call, limit, everyone=False):
 
 # Shortlist
 
+# Accounts: who to contact first. Grades change the order of the list; they never remove anyone.
+
+GRADES = ("A", "B", "C")
+REACH_ROLES = ("buyer", "connector", "both")
+ACCOUNT_POINTS = {"A": 2, "B": 1, "C": 0}
+REACH_POINTS = {"A": 1, "B": 0.5, "C": 0}
+EVIDENCE_POINTS = {"strong": 3, "look": 2, "low": 1}
+SENIORITY_POINTS = (1.0, 0.6, 0.4, 0.25)  # Executives and heads, directors, managers and leads, everyone else.
+MONTHS = {name: number for number, name in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
+
+
+def account_key(row):
+    """A company's key on the accounts sheet: the name in its LinkedIn page address."""
+    match = re.search(r"/company/([\w%.-]+)", row.get("company_url") or "")
+    return match.group(1).casefold() if match else None
+
+
+def load_accounts(project):
+    """accounts.json: an A, B or C for each company, and reach for each person. Missing entries count as B."""
+    data = read(project / "accounts.json", {})
+    if not isinstance(data, dict):
+        raise ValueError("Fix accounts.json: it must be an object with companies and people.")
+    companies, people, problems = data.get("companies", {}), data.get("people", {}), []
+    if not isinstance(companies, dict) or not isinstance(people, dict):
+        raise ValueError("Fix accounts.json: companies and people must each be an object.")
+    for key, entry in companies.items():
+        if not isinstance(entry, dict) or entry.get("grade") not in GRADES or not norm(entry.get("why")):
+            problems.append(f"companies.{key}: needs a grade of A, B or C and one sentence on why.")
+    for key, entry in people.items():
+        if not isinstance(entry, dict) or entry.get("reach", "C") not in GRADES or entry.get("role", "buyer") not in REACH_ROLES:
+            problems.append(f"people.{key}: reach must be A, B or C, and role buyer, connector or both.")
+        elif entry.get("account", "B") not in GRADES or not isinstance(entry.get("new_role", False), bool) \
+                or not isinstance(entry.get("check", ""), str) or not isinstance(entry.get("why", ""), str):
+            problems.append(f"people.{key}: account must be A, B or C, new_role true or false, check and why text.")
+    if problems:
+        raise ValueError("Fix accounts.json:\n  " + "\n  ".join(problems))
+    return companies, people
+
+
+def started_on(text):
+    """'Oct 2026' or '2026' from a LinkedIn date, as the first day it could mean."""
+    match = re.match(r"\s*(?:([A-Za-z]{3})[a-z]*\s+)?(\d{4})", text or "")
+    if not match:
+        return None
+    return date(int(match.group(2)), MONTHS.get((match.group(1) or "jan").casefold(), 1), 1)
+
+
+def new_in_role(person, today, days=92):
+    began = started_on(person.get("role_started"))
+    return bool(began) and 0 <= (today - began).days <= days
+
+
+def priority(row, companies, people, today, colleagues):
+    """How soon to contact someone: evidence, the account, their reach and seniority, timing, and colleagues on the list."""
+    person = people.get(row["key"], {})
+    slug = account_key(row)
+    graded = companies.get(slug, {}).get("grade") if slug else None
+    grade = person.get("account") or graded or ("B" if row["company"] else "C")  # No employer at all: no account to sell to.
+    # Reach is its own bonus, whatever the account. A connector's network is part of the deal, so it counts in full;
+    # for a buyer it breaks ties, at half.
+    reach = REACH_POINTS[person.get("reach", "C")] * (1 if person.get("role") in {"connector", "both"} else 0.5)
+    published = date.fromisoformat(row["published_on"]) if row["published_on"] else None
+    age = (today - published).days if published else 99
+    timing = 0.75 if age <= 7 else 0.4 if age <= 14 else 0
+    timing += 0.5 if person.get("new_role") else 0
+    points = (EVIDENCE_POINTS[row["fit"]] + (1 if row["buying_now"] else 0) + ACCOUNT_POINTS[grade] + reach
+              + SENIORITY_POINTS[seniority(row["role"])] + timing + (0.5 if colleagues else 0))
+    why = companies.get(slug, {}).get("why") if graded and not person.get("account") else person.get("why", "")
+    return round(points, 2), grade, why or ""
+
+
+def prioritise(project, rows, created):
+    """Order each fit section by priority, with a company's people kept together under its best-placed row."""
+    try:
+        companies, people = load_accounts(project)
+    except ValueError:
+        companies, people = {}, {}  # check reports a broken file; the shortlist still comes out, in a plainer order.
+    today = date.fromisoformat(created)
+    firm = lambda row: job_board.company_key(row["company"]) if row["company"] else row["key"]
+    firms = {}
+    for row in rows:
+        firms.setdefault(firm(row), []).append(row)
+    for row in rows:
+        row["priority"], row["account"], row["account_why"] = priority(row, companies, people, today, len(firms[firm(row)]) > 1)
+        person = people.get(row["key"], {})
+        row["reach"] = f"{person['reach']} {person.get('role', 'buyer')}" if person.get("reach") else ""
+        row["labels"] = [*(["buying now"] if row["buying_now"] else []), *(["new in role"] if person.get("new_role") else []),
+                         *([f"check: {person['check']}"] if person.get("check") else []), *row["labels"]]
+    rows.sort(key=lambda row: (row["fit"] == "low", -row["priority"], -(
+        date.fromisoformat(row["published_on"]).toordinal() if row["published_on"] else 0)))
+    ordered, placed = [], set()
+    for row in rows:
+        if id(row) in placed:
+            continue
+        group = [row] + [other for other in firms[firm(row)] if other is not row and other["fit"] == row["fit"] and id(other) not in placed]
+        group[1:] = sorted(group[1:], key=lambda other: -other["priority"])
+        ordered += group
+        placed |= {id(member) for member in group}
+    return ordered
+
+
+def accounts(project, call, funding=False):
+    """Look up what decides an account's weight, and write the sheet the agent grades into accounts.json."""
+    plan = load_plan(project)
+    rows, _, _, posts, *_ = shortlist_rows(project)
+    if not rows:
+        raise ValueError("Nobody is verified yet. Run verify, or contacts for job ads, first.")
+    people, facts = read(project / "people.json", {}), read(project / "companies.json", {})
+    pages = {account_key(row): row["company_url"] for row in rows if account_key(row)}
+
+    def look(item):
+        slug, url = item
+        record = dict(facts.get(slug) or {})
+        if "type" not in record:  # Job ads carry a thinner record, and older runs kept less.
+            record = call(t.COMPANY, {"url": url}, lambda data: employer_record(data, url)) or record
+        if funding and "funding" not in record:
+            found = call(t.FUNDING, {"linkedinURL": url, "perPage": 10, "page": 1}, t.funding_rounds)
+            record = {**record, "funding": found} if found is not None else record
+        return record
+
+    for (slug, _), record in zip(pages.items(), together(call, look, list(pages.items()))):
+        if record:
+            facts[slug] = record
+    t.atomic_json(project / "companies.json", facts)
+    companies, graded_people = load_accounts(project)
+    today = date.fromisoformat(read(project / "project.json")["created"])
+    on_list = {}
+    for row in rows:
+        on_list.setdefault(account_key(row), []).append(row)
+    lines = ["# Accounts sheet", "",
+             f"Seller: {plan['product']}", f"Buyer: {plan['buyer']}",
+             f"Ideal account: {plan['ideal_account'] or 'not set. Add ideal_account to plan.json first.'}", "",
+             "Grade every company and every person into accounts.json, as docs/playbook.md describes. "
+             "Grades decide the order of the shortlist. Nobody is removed.", "", DATA_NOTE, "", "## Companies", ""]
+    for slug, url in pages.items():
+        record = facts.get(slug, {})
+        lines.append(f"### {slug} · {record.get('name') or on_list[slug][0]['company']}"
+                     + (f" · graded {companies[slug]['grade']}: {companies[slug]['why']}" if slug in companies else ""))
+        lines.append("- " + (" · ".join(filter(None, [
+            record.get("type"), headcount(record.get("employees"), " on LinkedIn"),
+            f"{record['followers']:,} LinkedIn followers" if record.get("followers") else "", record.get("industry"),
+            f"founded {record['founded']}" if record.get("founded") else ""])) or "No company record."))
+        if record.get("about"):
+            lines.append(f"- Says: {record['about']}")
+        money_line = record.get("funding")
+        if money_line is not None or funding:
+            lines.append("- Funding: " + (
+                "no rounds on record" if not money_line or not money_line.get("rounds") else
+                f"{money_line['rounds']} rounds, US${money_line['raised_usd'] / 1e6:,.1f}M in total; latest "
+                f"{money_line['latest_stage'] or 'round'} on {money_line['latest_on'] or 'an unknown date'}"))
+        lines.append("- On the list: " + "; ".join(f"{row['role']} ({row['fit']}, {'job ad' if row['kind'] == 'hiring signal' else 'post'})"
+                                                   for row in on_list[slug]))
+        lines.append("")
+    lines += ["## People", ""]
+    for row in rows:
+        person = (people.get(row["key"]) or {}).get("verified") or {}
+        account = (people.get(row["key"]) or {}).get("account") or {}
+        slug = account_key(row)
+        where = f"{row['company']} ({slug})" if slug else (f"{row['company']}, no company page: grade the account here"
+                                                            if row["company"] else "no employer listed")
+        lines.append(f"### {row['key']} · {row['role']} @ {where}"
+                     + (f" · graded reach {graded_people[row['key']].get('reach', 'C')}" if row["key"] in graded_people else ""))
+        lines.append(f"- Signal: {row['fit']} · {'job ad' if row['kind'] == 'hiring signal' else 'post'} · {row['channel']} · "
+                     f"{row['published_on'] or 'no date'}" + (" · buying now" if row["buying_now"] else ""))
+        headline = (posts.get(row["key"]) or {}).get("headline")
+        if headline:
+            lines.append(f"- Headline: {headline}")
+        audience = [f"{person['followers']:,} LinkedIn followers" if isinstance(person.get("followers"), int) else "",
+                    "LinkedIn creator" if person.get("creator") else "",
+                    f"{account['followers']:,} X followers" if isinstance(account.get("followers"), int) else ""]
+        lines.append("- Audience: " + (" · ".join(filter(None, audience)) or "unknown"))
+        if person.get("role_started"):
+            lines.append(f"- In this role since {person['role_started']}"
+                         + (". NEW ROLE: decide whether it is a buying moment." if new_in_role(person, today) else ""))
+        if person.get("other_roles"):
+            lines.append("- Also: " + "; ".join(person["other_roles"]))
+        if person.get("past_roles"):
+            lines.append("- Before: " + "; ".join(person["past_roles"]))
+        lines.append(f"- Their words: “{row['quote'][:240]}”")
+        lines.append("")
+    save(project / "accounts-sheet.md", terminal_text("\n".join(lines)) + "\n")
+    left = len(set(pages) - set(companies)) + len({row["key"] for row in rows} - set(graded_people))
+    print(f"Wrote {len(pages)} companies and {len(rows)} people to {project / 'accounts-sheet.md'}; "
+          f"{left} still to grade in accounts.json." + ("" if funding else " Add --funding when the ideal account turns on funding."))
+
+
 def csv_value(value):
     value = str(value or "")
     return "'" + value if value.lstrip().startswith(("=", "+", "-", "@")) or value.startswith(("\t", "\r", "\n")) else value
@@ -1655,14 +1867,14 @@ def shortlist_rows(project):
             "identity_basis": entry.get("identity_basis", "author of the LinkedIn post"),
             "channel": entry["channel"], "source_url": source["url"], "published_on": source.get("published_on") or "",
             "quote": norm(grade["quote"]), "why": norm(grade["why"]), "labels": labels, "other_sources": [],
+            "buying_now": grade.get("buying_now") is True,
             "your_answer": votes.get(entry["profile_url"], {}).get("vote") or "",
             "your_note": votes.get(entry["profile_url"], {}).get("note") or "",
             "work_email": entry.get("work_email", {}).get("address", ""),
             "work_email_status": entry.get("work_email", {}).get("status", ""), "key": key, "id": key,
             "x_handle": source["author"].lstrip("@") if entry["channel"] == "x" else "", "run_date": created,
             "found_by": "; ".join(source.get("found_by", []))}
-    rows = sorted(rows.values(), key=lambda row: row["published_on"], reverse=True)  # Newest first within each fit.
-    rows.sort(key=lambda row: (FITS.index(row["fit"]), row["kind"]))
+    rows = prioritise(project, list(rows.values()), created)
     by_company = {}
     for row in rows:
         by_company.setdefault(job_board.company_key(row["company"]), []).append(row)
@@ -1694,6 +1906,7 @@ def shortlist(project):
             role = cell(f"{row['role']}, {row['company']}" if row["company"] else row["role"])
             facts = " · ".join(filter(None, [headcount(row["company_size"]), row["company_industry"]]))
             role += f"<br>{cell(facts)}" if facts else ""
+            role += f"<br>{row['account']} account" + (f": {cell(row['account_why'])}" if row["account_why"] else "")
             more = "".join(f" ([also]({url}))" for url in row["other_sources"])
             answer = f" · you said {row['your_answer']}" if row["your_answer"] else ""
             email = f"<br>{cell(row['work_email'])}" if row["work_email"] else ""
@@ -1757,6 +1970,7 @@ def funnel(project):
             "Worth contacting": sum(row["fit"] != "low" for row in rows),
             "Strong": sum(row["fit"] == "strong" for row in rows),
             "Low fit": sum(row["fit"] == "low" for row in rows),
+            "Accounts graded": len(load_accounts(project)[0]),
             "Held people": sum(not item["job"] for item in held),
             "Job ads with no owner": sum(item["job"] for item in held)})
     except ValueError:
@@ -1790,7 +2004,7 @@ def main(argv=None):
     begin.add_argument("--previous", type=Path, help="an earlier run folder: skip its people and learn from your answers")
     begin.add_argument("--suppress", type=Path, help="a list or CRM export of people and companies to leave out: profile links, work emails, domains, company names")
     commands.add_parser("connect", help="check the Treg sign-in; costs nothing")
-    commands.add_parser("check", help="validate plan.json, grades.json and job-grades.json")
+    commands.add_parser("check", help="validate plan.json, grades.json, job-grades.json and accounts.json")
     find = commands.add_parser("search", help="run the planned LinkedIn and X searches")
     find.add_argument("--pages", type=int, default=1, choices=(1, 2, 3))
     find.add_argument("--x-pages", type=int, default=2, choices=(1, 2, 3, 4, 5), help="pages of 20 per X query, best-ranked then newest")
@@ -1814,6 +2028,8 @@ def main(argv=None):
     owners = commands.add_parser("contacts", help="find and verify a current owner for each graded job mandate")
     owners.add_argument("--per-job", type=whole(1), default=4, help="profiles checked per ad before giving up")
     owners.add_argument("--limit", type=whole(1), default=12, help="ads to find an owner for, strongest first")
+    weigh = commands.add_parser("accounts", help="write the sheet for grading accounts and reach, which orders the shortlist")
+    weigh.add_argument("--funding", action="store_true", help="look up funding rounds too, about a cent per company")
     commands.add_parser("shortlist", help="write shortlist.md and shortlist.csv")
     answers = commands.add_parser("review", help="open a local page to say yes or no to each person")
     answers.add_argument("--port", type=whole(0, 65535), default=8765)
@@ -1842,9 +2058,10 @@ def main(argv=None):
         if args.command == "check":
             for note in plan_notes(load_plan(project), (project / "posts.json").exists()):
                 print("Note:", note)
+            load_accounts(project)
             quoted = sum(grade["verdict"] in QUOTED for grade in check_grades(project)[1].values())
             quoted += sum(grade["verdict"] == "mandate" for grade in check_job_grades(project)[1].values())
-            print("plan.json, grades.json and job-grades.json are valid."
+            print("plan.json, grades.json, job-grades.json and accounts.json are valid."
                   + (f" {quoted} quotes match their sources word for word." if quoted else ""))
         elif args.command == "sheet":
             jobs_sheet(project, args.limit or 20) if args.jobs else sheet(project, args.limit or 60, max(300, args.chars))
@@ -1872,6 +2089,8 @@ def main(argv=None):
                     jobs_search(project, call, args.per_query, args.lookback_days)
                 elif args.command == "contacts":
                     job_contacts(project, call, args.per_job, args.limit)
+                elif args.command == "accounts":
+                    accounts(project, call, args.funding)
                 elif args.command == "web":
                     web(project, call, args.query)
                 elif args.command == "timeline":

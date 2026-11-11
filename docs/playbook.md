@@ -62,6 +62,7 @@ Read `site.md`. If the user told you who their buyer is, trust that over the sit
 | `job_queries` | 5 to 8 job-ad searches. Each is a short quoted phrase an ad would contain: a tool, a duty, or the buyer's own jargon, such as `"CRM migration"` or `"HubSpot admin"`. Put the phrase the ad must contain first: LinkedIn is searched on that phrase alone, the job boards on the whole query. Long strings of keywords return noise. |
 | `owner_titles` | Titles of the people who own this work, most likely owner first. They are used to find a contact behind a job ad, and when two people fit, the earlier title wins. |
 | `employer_topic` | One word or short phrase for follow-up searches at an employer, such as `CRM`. |
+| `ideal_account` | One sentence on which accounts matter most to this business: the size, stage, segment or names that make a deal count. For example "funded AI-native startups and software brands other buyers know", or "owner-led firms under 50 people where the founder sells". Ask the user if the site doesn't say. It orders the shortlist; it removes nobody. |
 
 ### Write queries the way a buyer talks
 
@@ -121,7 +122,8 @@ python3 pudding.py --project ~/pudding-runs/acme/2026-11-17 start https://exampl
 - writes `feedback.md`: what the reviewer said yes and no to, and what each search found last time;
 - reads only posts since the last run, with two days' overlap;
 - leaves out every post and employer already read, and everyone already shown;
-- keeps the same suppression list, unless you pass a new one.
+- keeps the same suppression list, unless you pass a new one;
+- keeps last time's company grades in `accounts.json`, so you grade only new companies.
 
 Read `feedback.md` first. Keep the searches that found people. Replace the ones that found none with new angles, so about a third of the plan is new each run. Lean towards people like the reviewer's yes answers. Then run the steps as usual. There is less to read: stop when the stop rule says, and at 240 authors in any case.
 
@@ -163,6 +165,8 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 
 **Fit decides who the reviewer sees first.** `strong` is someone the user would want to talk to this week: the right buyer, describing this problem now, and not yet committed to another answer. Someone who finished switching last month is `look` at best. `look` is worth a look. `low` goes in its own section: use it for someone who has just committed to a competitor, runs a vertical tool, or sits outside the buyer.
 
+**Mark who is deciding now.** Add `"buying_now": true` when their own words say a purchase decision is open: they are choosing or comparing tools, asking for recommendations, a renewal is coming, or they say they would switch. It moves them up the shortlist, so keep it rare: a few people in a run, not a quarter of it. Building something in-house, a complaint, or a plan with no tool to choose is not buying now.
+
 **Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell a competing product, sell services around this category's tools, or recruit for it. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
 
 A short reply can be a prospect if it describes the author's own work. Agreement, advice and a job title are not evidence.
@@ -190,7 +194,7 @@ P0012 Ada Example: CTO, Fig · 59 people on LinkedIn · Software Development · 
 - `POSSIBLE SELLER` on the line: the employer's own description, a second role on the profile or the headline matches your `seller_terms`, or they work at a company you excluded. Decide which kind. A direct competitor, selling the same thing to the same buyer, is `no`. Someone who sells something nearby usually lives with the problem too: keep them if the post shows it. The shortlist row carries the flag so the user can decide.
 - An agency, studio or fractional leader describing their own delivery work: keep them, with the label `agency` or `fractional`. They work across several companies and can carry a tool into each. An outsourcing or staffing firm, or a recruiter: `no`.
 - If the user told you who they do and don't want, that decides it.
-- A company far larger or smaller than the buyer you were given, or in the wrong business: `low`, or `look` with a label such as `larger company`.
+- A company in the wrong business: `low`. A company far larger or smaller than the buyer you were given keeps its fit, with a label such as `larger company`; the account grade later decides how far up it goes.
 - A role that contradicts the post: change the grade to match what is true now.
 - Someone open to work, by LinkedIn's banner or their headline, is labelled `open to work`. If they still have a job, their grade stands: they can buy now, and may move on. If they have no current role, the shortlist puts them in low fit, since there is no team to buy for yet.
 
@@ -243,7 +247,7 @@ python3 pudding.py --project DIR sheet --jobs
 
 `jobs` searches LinkedIn's job listings and the employer job boards for each query, keeps one ad per employer, and writes the 20 that say most about your topics to `jobs-sheet.md`. Grade those, then run `sheet --jobs` for the next 20. Read every ad: each is a company telling you what its team is doing, and there are only about a hundred. Grade them in `job-grades.json`.
 
-An ad from LinkedIn shows the employer's size, industry and description, and the hiring team when the ad names one. Use them before you grade: a staffing firm hiring for a client is `no`, and a company far from the buyer's size is `low`.
+An ad from LinkedIn shows the employer's size, industry and description, and the hiring team when the ad names one. Use them before you grade: a staffing firm hiring for a client is `no`. A company far from the buyer's size keeps its fit with a label, as in verify.
 
 ```json
 {
@@ -261,7 +265,7 @@ An ad from LinkedIn shows the employer's size, industry and description, and the
 | `customer` | The employer already uses the product. |
 | `no` | Everything else. |
 
-`strong` is an ad that states the problem or hands the work to this hire. `look` is an ad that only shows the team works the way your buyer does. Set `fit` to `low` and add a label when the employer is committed to a competitor, such as hiring someone to administer it. An employer moving off a tool, or still choosing, is not `low`.
+`strong` is an ad that states the problem or hands the work to this hire. Add `"buying_now": true` only when the ad has the hire evaluate, choose or replace a tool in this category. Building or maintaining the team's own systems is not buying now. `look` is an ad that only shows the team works the way your buyer does. Set `fit` to `low` and add a label when the employer is committed to a competitor, such as hiring someone to administer it. An employer moving off a tool, or still choosing, is not `low`.
 
 ```sh
 python3 pudding.py --project DIR contacts
@@ -269,20 +273,59 @@ python3 pudding.py --project DIR contacts
 
 `contacts` finds who owns the work today for the twelve best `strong` and `look` ads (`--limit` raises that; the lookups are the dear part of a run), in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. If the search finds only colleagues or someone junior, it follows a colleague's profile to the employer's LinkedIn page and asks for the title holders there. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open.
 
-## 5. Shortlist and review
+## 5. Put the best accounts first
+
+```sh
+python3 pudding.py --project DIR accounts
+```
+
+Everyone verified stays on the list. This step decides who comes first. `accounts` looks up each employer's LinkedIn record (its type, size, followers and founding year) and writes `accounts-sheet.md`: every company, then every person with their audience, how long they have held the role and where they worked before. Add `--funding` when `ideal_account` turns on funding, as it does for a seller to funded startups. It costs about a cent per company. Leave it off for a seller to small businesses, where funding says little.
+
+Grade both into `accounts.json`:
+
+```json
+{
+  "companies": {
+    "fig-labs": {"grade": "A", "why": "Series B, 200 people, a name other buyers know."},
+    "tiny-studio": {"grade": "C", "why": "A two-person studio."}
+  },
+  "people": {
+    "P0012": {"reach": "A", "role": "connector", "why": "Fractional CRO to a dozen startups; 14k followers in sales ops."},
+    "J004": {"reach": "C", "role": "buyer", "new_role": true, "why": "Joined as Head of RevOps in September."},
+    "P0031": {"reach": "B", "role": "buyer", "account": "A", "why": "No company page: a stealth team with a known founder."}
+  }
+}
+```
+
+Companies are keyed by the name in their LinkedIn page address, as the sheet shows. People are keyed by their post or job ad ID.
+
+**Grade each company against `ideal_account`, not against size.** A is an account that would matter to this business: the deal, the logo or the reach the seller wants. B is an ordinary fit. C is a weak one: a one-person shop, the wrong segment, a company in trouble. For a seller of enterprise software, a public company or a well-funded scale-up is an A. For a seller to small owner-led firms, that scale-up is a C and the 12-person firm is an A. Look past LinkedIn's record where it misleads: a brand inside a larger group, a stealth team with a known founder, a company type that is plainly wrong.
+
+**Grade each person's reach.** Count LinkedIn and X followers together. A is 10,000 or more followers drawn from the seller's buyers, a senior track record at companies people know, or advising or investing across many relevant teams. B is a few thousand relevant followers, or one notable senior role. C is everyone else. An audience in another field counts for little. An internship, a short stint, or a claim in the headline that the past roles don't show counts for nothing.
+
+- `role`: `buyer` buys for their own team. `connector` reaches buyers instead of being one: fractional leaders, advisors, investors, agency and studio owners. `both` buys for a team of their own and also reaches buyers: a connector with a team, or someone whose own audience is the seller's buyers, such as a developer advocate or a creator. Reach counts in full for `connector` and `both`; for a `buyer` it breaks ties.
+- `new_role`: for someone the sheet marks NEW ROLE, `true` when the new role puts them in charge of this decision at an existing company: a new leader, a promotion into one, or a hire brought in to choose the tooling. Their own new consultancy or side project is not.
+- `account` on a person: the account grade when they have no company page, when LinkedIn matched the wrong company, or when the company grade is wrong for them. A junior employee at a large company can't bring the account in alone: give them the grade of the deal they could start, often B. Start their `why` with the account reason: the shortlist shows it beside the grade.
+- `check`: a warning for their row, such as a job ad matched to a different company with the same name, or a contact from `contacts` who doesn't own the work, such as a CEO from another function.
+
+Grade every company and every person. An ungraded company counts as B and an ungraded person as C reach, and someone with no employer at all as a C account, so a partly graded file still works. Run `check` after writing it.
+
+**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted this week, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is on the list. Colleagues sit together under their company's best row. Low fit keeps its own section, ordered the same way.
+
+## 6. Shortlist and review
 
 ```sh
 python3 pudding.py --project DIR shortlist
 python3 pudding.py --project DIR review
 ```
 
-`shortlist.md` leads with the people worth contacting. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person with a `fit` column and their employer's size and industry.
+`shortlist.md` leads with the people worth contacting, best accounts and people deciding now first. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person in the same order, with `fit`, `account`, `account_why`, `reach` and `priority` columns and their employer's size and industry.
 
 `review` opens a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. Tell the user the address it prints and leave it running.
 
 Report the number worth contacting, not the total verified. Give the funnel and the spend, and say plainly what was not covered.
 
-## 6. Work email
+## 7. Work email
 
 ```sh
 python3 pudding.py --project DIR enrich

@@ -1568,5 +1568,116 @@ class AgentRunTest(unittest.TestCase):
                          {"companies": {"fig": {"grade": "A", "why": "Series A."}}, "people": {}})
         self.assertEqual(json.loads((later / "companies.json").read_text()), {"fig": {"name": "Fig", "type": "Privately Held"}})
 
+    def named_world(self, hits, company="Fig", poster_role="CEO"):
+        """A prospect who credits Bea Exámple, and a stand-in web search and LinkedIn. Returns (call, calls)."""
+        page = f"https://www.linkedin.com/company/{company.lower()}"
+        posts = {}
+        pudding.add_posts(posts, [{**POST, "text": POST["text"] + "\nOur founding engineer Bea Exámple wrote it up."}], "q")
+        self.write("posts.json", posts)
+        self.write("grades.json", {"P0001": {"verdict": "prospect", "fit": "strong", "why": "Own team.", "named": ["Bea Exámple"],
+                                             "quote": "We switched off Tool1 in March."}})
+        roles = {"https://www.linkedin.com/in/ada": ("Ada Example", poster_role, company),
+                 "https://www.linkedin.com/in/bea-namesake": ("Bea Example", "Engineer", "Plum"),
+                 "https://www.linkedin.com/in/bea-recruiter": ("Bea Example", "Technical Recruiter", company),
+                 "https://www.linkedin.com/in/bea": ("Bea Example", "Founding Engineer", company)}
+        calls = []
+
+        def call(endpoint, params, transform):
+            calls.append((endpoint, params.get("url")))
+            if endpoint == t.COMPANY:
+                return transform({"element": {"linkedinUrl": page, "name": company, "employeeCount": 9}})
+            if endpoint == t.BUYER_WEB:
+                return None if hits is None else transform({"organic": hits})
+            name, role, firm = roles[params["url"]]
+            data = profile([{"position": role, "companyName": firm,
+                             "companyLinkedinUrl": f"https://www.linkedin.com/company/{firm.lower()}"}], url=params["url"])
+            data["element"]["firstName"], data["element"]["lastName"] = name.split()
+            return transform(data)
+
+        return call, calls
+
+    def test_verify_adds_the_colleague_a_prospect_credits(self):
+        call, calls = self.named_world([
+            {"link": "https://uk.linkedin.com/in/bea-namesake", "title": "Bea Example - Plum | LinkedIn", "snippet": "Engineer at Plum"},
+            {"link": "https://www.linkedin.com/in/bea-recruiter", "title": "Bea Example - Fig | LinkedIn"},
+            {"link": "https://www.linkedin.com/in/bea", "title": "Bea Example, PhD | LinkedIn", "snippet": "Experience: Fig · Location: Leeds"}])
+        pudding.verify(self.project, call, 5)
+        people = json.loads((self.project / "people.json").read_text())
+        # A namesake elsewhere costs no profile lookup, a recruiter is passed over, and an accent and a credential hide nobody.
+        self.assertEqual((people["P0001.1"]["profile_url"], people["P0001.1"]["identity_basis"]),
+                         ("https://www.linkedin.com/in/bea", "named in Ada Example's post"))
+        self.assertNotIn((t.PROFILE, "https://www.linkedin.com/in/bea-namesake"), calls)
+        self.assertEqual(people["P0001"]["named_checked"], ["Bea Exámple"])
+        rows = pudding.shortlist_rows(self.project)[0]
+        self.assertEqual([(row["key"], row["kind"], row["fit"]) for row in rows],
+                         [("P0001", "firsthand post", "strong"), ("P0001.1", "entry point", "look")])
+        self.assertEqual((rows[1]["labels"][0], rows[1]["quote"]), ("named in Ada Example's post", "We switched off Tool1 in March."))
+        self.assertTrue(rows[1]["why"].startswith("Colleague of Ada Example: "))
+        calls.clear()
+        pudding.verify(self.project, call, 5)  # A name is looked up once.
+        self.assertEqual(calls, [])
+        # Someone who has not spoken is counted apart from the people who have.
+        pudding.shortlist(self.project)
+        page = (self.project / "shortlist.md").read_text()
+        self.assertIn("## Worth contacting (1, and 1 colleague they named)", page)
+        self.assertEqual({k: v for k, v in pudding.funnel(self.project).items() if k in ("Worth contacting", "Named colleagues")},
+                         {"Worth contacting": 1, "Named colleagues": 1})
+        self.write("grades.json", {"P0001": "no"})  # Their colleague is graded out, so they go too.
+        self.assertEqual(pudding.shortlist_rows(self.project)[0], [])
+
+    def test_a_named_colleague_is_tried_again_after_an_outage_or_the_cap(self):
+        call, calls = self.named_world(None)  # The web search fails.
+        pudding.verify(self.project, call, 5)
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertEqual(people["P0001"].get("named_checked", []), [])
+        call, calls = self.named_world([{"link": "https://www.linkedin.com/in/bea", "title": "Bea Example - Fig | LinkedIn"}])
+        self.write("people.json", people)
+        refusals = []
+        call.refused = lambda: len(refusals)  # The cap refuses the profile lookup.
+        real = call
+
+        def capped(endpoint, params, transform):
+            if endpoint == t.PROFILE:
+                refusals.append(1)
+                return None
+            return real(endpoint, params, transform)
+
+        capped.refused = call.refused
+        pudding.verify(self.project, capped, 5)
+        people = json.loads((self.project / "people.json").read_text())
+        self.assertEqual((people["P0001"].get("named_checked", []), "P0001.1" in people), ([], False))
+        pudding.verify(self.project, call, 5)
+        self.assertIn("P0001.1", json.loads((self.project / "people.json").read_text()))
+
+    def test_no_colleagues_are_looked_up_for_a_self_employed_or_low_fit_prospect(self):
+        call, calls = self.named_world([{"link": "https://www.linkedin.com/in/bea", "title": "Bea Example - Freelance | LinkedIn"}],
+                                       company="Freelance")
+        pudding.verify(self.project, call, 5)
+        self.assertNotIn(t.BUYER_WEB, [endpoint for endpoint, _ in calls])
+        call, calls = self.named_world([{"link": "https://www.linkedin.com/in/bea", "title": "Bea Example - Fig | LinkedIn"}])
+        grades = json.loads((self.project / "grades.json").read_text())
+        grades["P0001"]["fit"] = "low"
+        self.write("grades.json", grades)
+        self.write("people.json", {})
+        pudding.verify(self.project, call, 5)
+        self.assertNotIn(t.BUYER_WEB, [endpoint for endpoint, _ in calls])
+
+    def test_someones_own_post_comes_before_a_colleagues_mention(self):
+        page = "https://www.linkedin.com/company/fig"
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", page), ("P0382", "look", "Founding Engineer", "Fig", page)])
+        people = json.loads((self.project / "people.json").read_text())
+        people["P0001.1"] = {**people["P0382"], "channel": "named", "thread_of": "P0001",
+                             "identity_basis": "named in Person p0001's post"}
+        self.write("people.json", people)
+        rows = pudding.shortlist_rows(self.project)[0]
+        self.assertEqual([(row["key"], row["kind"]) for row in rows], [("P0001", "firsthand post"), ("P0382", "firsthand post")])
+        self.assertEqual(rows[1]["other_sources"], ["https://www.linkedin.com/posts/p0001"])
+
+    def test_named_colleagues_must_be_full_names(self):
+        page = "https://www.linkedin.com/company/fig"
+        for names in (["@bea"], ["Bea"], ["Ann Example", "Bea Example", "Cal Example", "Dee Example"]):
+            with self.assertRaisesRegex(ValueError, "named must be a list of up to three full names"):
+                self.ranked_run([("P0001", "strong", "CEO", "Fig", page, {"named": names})])
+
 if __name__ == "__main__":
     unittest.main()

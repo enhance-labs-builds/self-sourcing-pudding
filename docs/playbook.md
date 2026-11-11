@@ -167,6 +167,8 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 
 **Mark who is deciding now.** Add `"buying_now": true` when their own words say a purchase decision is open: they are choosing or comparing tools, asking for recommendations, a renewal is coming, or they say they would switch. It moves them up the shortlist, so keep it rare: a few people in a run, not a quarter of it. Building something in-house, a complaint, or a plan with no tool to choose is not buying now.
 
+**Note who they point at.** When a post credits a colleague at the same company for this work, such as "our founding engineer Ada Example wrote up how we test", add `"named": ["Ada Example"]`: full names only, three at most. `verify` looks each one up. Leave out people at other companies, customers, and anyone thanked in passing.
+
 **Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell a competing product, sell services around this category's tools, or recruit for it. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
 
 A short reply can be a prospect if it describes the author's own work. Agreement, advice and a job title are not evidence.
@@ -188,6 +190,14 @@ It also looks up each employer and prints its size on LinkedIn, its industry and
 ```text
 P0012 Ada Example: CTO, Fig · 59 people on LinkedIn · Software Development · Invoices for small teams.
 ```
+
+When a prospect named a colleague, `verify` finds that colleague, confirms they work at the same company now, and adds them beside the prospect as an entry point:
+
+```text
+P0012.1 Bea Example, Founding Engineer at Fig: named in Ada Example's post
+```
+
+The person who posted is not always the one who replies. A busy founder may not answer when the engineer they credited will. An entry point has said nothing in public, so the shortlist shows them under the colleague who named them, with that colleague's evidence, and counts them apart.
 
 **Read every line and regrade before you go on.** The post told you about the person; this tells you about the company.
 
@@ -310,7 +320,7 @@ Companies are keyed by the name in their LinkedIn page address, as the sheet sho
 
 Grade every company and every person. An ungraded company counts as B and an ungraded person as C reach, and someone with no employer at all as a C account, so a partly graded file still works. Run `check` after writing it.
 
-**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted this week, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is on the list. Colleagues sit together under their company's best row. Low fit keeps its own section, ordered the same way.
+**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted this week, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is on the list. Colleagues sit together under their company's best row, whatever their fit, and an entry point counts as worth a look. Low fit keeps its own section, ordered the same way.
 
 ## 6. Shortlist and review
 
@@ -323,7 +333,7 @@ python3 pudding.py --project DIR review
 
 `review` opens a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. Tell the user the address it prints and leave it running.
 
-Report the number worth contacting, not the total verified. Give the funnel and the spend, and say plainly what was not covered.
+Report the number worth contacting, not the total verified, and give named colleagues as a separate number. When two people at one small company are on the list, suggest the user writes to one at a time, starting with whoever is closest to the problem. Give the funnel and the spend, and say plainly what was not covered.
 
 ## 7. Work email
 

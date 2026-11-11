@@ -10,6 +10,7 @@ import argparse
 import csv
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import hashlib
@@ -725,6 +726,9 @@ def check_grades(project):
             problems.append(f"{key}: labels must be a list of short strings.")
         if not isinstance(grade.get("buying_now", False), bool):
             problems.append(f"{key}: buying_now must be true or false.")
+        if (not strings(grade.get("named", [])) or len(grade.get("named", [])) > 3
+                or any(not re.fullmatch(FULL_NAME, name.strip()) for name in grade.get("named", []))):
+            problems.append(f"{key}: named must be a list of up to three full names, such as [\"Ada Example\"].")
         if "linkedin" in grade and not named_profile(grade):
             problems.append(f"{key}: linkedin must be a personal profile link such as https://www.linkedin.com/in/name.")
     if problems:
@@ -854,6 +858,18 @@ def current_role(data, profile):
     if row.get("headline"):
         return {"name": name, "role": row["headline"], "company": "", "role_basis": "headline only", "other_roles": [], **extra}
     return None
+
+
+def plain_name(name):
+    """'Bea Exámple, PhD 💙' reads as 'bea example': credentials, emoji and accents set aside."""
+    name = unicodedata.normalize("NFKD", str(name or "").split(",")[0].split(" | ")[0])
+    return " ".join(re.findall(r"[a-z'-]+", "".join(c for c in name if not unicodedata.combining(c)).casefold()))
+
+
+def same_person(left, right):
+    """The same first and last name, ignoring accents, credentials and emoji."""
+    a, b = plain_name(left).split(), plain_name(right).split()
+    return bool(a and b) and a[0] == b[0] and a[-1] == b[-1]
 
 
 def same_name(left, right):
@@ -1157,6 +1173,7 @@ def verify(project, call, limit, retry_held=False):
                                               f"POSSIBLE SELLER: {entry['seller']}" if entry["seller"] else ""]))
                      if entry["verified"] else f"HELD: {entry['hold']}")
             print(terminal_text(f"{key} {posts[key]['author']}: {state}"), flush=True)
+        named_colleagues(project, call, people, grades)
     finally:  # Lookups already paid for are kept, so a stopped run picks up where it left off.
         t.atomic_json(project / "people.json", people)
     if len(todo) > limit:
@@ -1681,13 +1698,15 @@ def priority(row, companies, people, today, colleagues):
 
 
 def prioritise(project, rows, created):
-    """Order each fit section by priority, with a company's people kept together under its best-placed row."""
+    """Order each section by priority, with a company's people kept together under its best-placed row."""
     try:
         companies, people = load_accounts(project)
     except ValueError:
         companies, people = {}, {}  # check reports a broken file; the shortlist still comes out, in a plainer order.
     today = date.fromisoformat(created)
-    firm = lambda row: job_board.company_key(row["company"]) if row["company"] else row["key"]
+    # The company's LinkedIn page decides who works together: "Fig" and "Fig AI" are one account.
+    firm = lambda row: account_key(row) or (job_board.company_key(row["company"])
+                                            if row["company"] and compact(row["company"]) not in GENERIC_EMPLOYER else row["key"])
     firms = {}
     for row in rows:
         firms.setdefault(firm(row), []).append(row)
@@ -1703,11 +1722,80 @@ def prioritise(project, rows, created):
     for row in rows:
         if id(row) in placed:
             continue
-        group = [row] + [other for other in firms[firm(row)] if other is not row and other["fit"] == row["fit"] and id(other) not in placed]
+        group = [row] + [other for other in firms[firm(row)] if other is not row and id(other) not in placed
+                         and (other["fit"] == "low") == (row["fit"] == "low")]
         group[1:] = sorted(group[1:], key=lambda other: -other["priority"])
         ordered += group
         placed |= {id(member) for member in group}
     return ordered
+
+
+def named_colleagues(project, call, people, grades):
+    """A colleague a verified prospect credits in their post joins them as an entry point: the poster vouched for them.
+
+    Each name costs one web search and, when a result places that name at the same company, one profile check."""
+    skip = read(project / "suppress.json", {})
+    taken = ({entry.get("profile_url") for entry in people.values()} | set(read(project / "previous.json", {}))
+             | set(skip.get("profiles", [])))
+    todo = []
+    for key, grade in grades.items():
+        entry = people.get(key) or {}
+        poster = entry.get("verified") or {}
+        names = [name for name in grade.get("named", []) if name not in entry.get("named_checked", [])]
+        # A weak match is not worth widening, and "Self-employed" is not a company two people share.
+        if (grade["verdict"] == "prospect" and grade.get("fit") != "low" and names and poster.get("company")
+                and compact(poster["company"]) not in GENERIC_EMPLOYER):
+            todo.append((key, poster, names))
+
+    def look(item):
+        key, poster, names = item
+        page, company, found, checked = poster.get("company_url"), poster["company"], [], []
+        mention = re.compile(r"(?<!\w)" + re.escape(brand(company)) + r"(?!\w)", re.I)
+
+        def here(person):  # Two LinkedIn pages are two companies, whatever they are called.
+            if page and person.get("company_url"):
+                return person["company_url"] == page
+            return same_employer(person["company"], company)
+
+        for name in names:
+            before = refused(call)
+            hits = None if same_person(poster["name"], name) else call(
+                t.BUYER_WEB, {"q": f'"{name}" "{brand(company)}" site:linkedin.com/in', "num": 10}, web_results)
+            for hit in (hits or [])[:5]:
+                profile, text = linkedin_result(hit), f"{hit.get('title') or ''} {hit.get('snippet') or ''}"
+                # Pay for a profile only when the result itself puts this name at this company.
+                if (not profile or profile in taken or not same_person((hit.get("title") or "").split(" - ")[0], name)
+                        or not mention.search(text)):
+                    continue
+                person = current_role(call(t.PROFILE, {"url": profile}, slim_profile), profile)
+                for other in (person or {}).get("other_roles", []):  # Someone with two jobs may list this company second.
+                    role, _, firm = other.rpartition(", ")
+                    if not here(person) and same_employer(firm, company):
+                        person = {**person, "role": role, "company": firm, "company_url": page,
+                                  "other_roles": [f"{person['role']}, {person['company']}"]}
+                if (person and same_person(person["name"], name) and here(person) and not person.get("open_to_work")
+                        and not BYSTANDER.search(person["role"])):
+                    # One account: the poster's company name and page, so the two sit together and share a grade.
+                    found.append({**person, "company": company, "company_url": page, "profile_url": profile})
+                    break
+            if (hits is not None or same_person(poster["name"], name)) and refused(call) == before:
+                checked.append(name)  # Looked up once, found or not. A lookup the cap or an outage stopped is tried again.
+        return key, checked, found
+
+    for key, checked, found in together(call, look, todo):
+        entry = people[key]
+        entry["named_checked"] = [*entry.get("named_checked", []), *checked]
+        for person in found:
+            profile = person.pop("profile_url")
+            if profile in taken:
+                continue
+            taken.add(profile)
+            number = 1 + sum(other.get("thread_of") == key for other in people.values())
+            basis = f"named in {entry['verified']['name']}'s post"
+            people[f"{key}.{number}"] = {"channel": "named", "thread_of": key, "source_url": entry["source_url"], "verified": person,
+                                         "profile_url": profile, "hold": None, "employer": entry.get("employer"),
+                                         "identity_basis": basis}
+            print(terminal_text(f"{key}.{number} {person['name']}, {person['role']} at {person['company']}: {basis}"), flush=True)
 
 
 def accounts(project, call, funding=False):
@@ -1771,8 +1859,11 @@ def accounts(project, call, funding=False):
                                                             if row["company"] else "no employer listed")
         lines.append(f"### {row['key']} · {row['role']} @ {where}"
                      + (f" · graded reach {graded_people[row['key']].get('reach', 'C')}" if row["key"] in graded_people else ""))
-        lines.append(f"- Signal: {row['fit']} · {'job ad' if row['kind'] == 'hiring signal' else 'post'} · {row['channel']} · "
-                     f"{row['published_on'] or 'no date'}" + (" · buying now" if row["buying_now"] else ""))
+        if row["kind"] == "entry point":
+            lines.append(f"- Entry point: {row['identity_basis']}. They have not posted; the words below are their colleague's.")
+        else:
+            lines.append(f"- Signal: {row['fit']} · {'job ad' if row['kind'] == 'hiring signal' else 'post'} · {row['channel']} · "
+                         f"{row['published_on'] or 'no date'}" + (" · buying now" if row["buying_now"] else ""))
         headline = (posts.get(row["key"]) or {}).get("headline")
         if headline:
             lines.append(f"- Headline: {headline}")
@@ -1809,10 +1900,15 @@ def shortlist_rows(project):
     seen_before, votes = read(project / "previous.json", {}), read(project / "review.json", {})
     created = read(project / "project.json")["created"]
     rows, customers, held, repeats = {}, [], [], []
-    order = sorted(people, key=lambda key: (FITS.index((grades.get(key) or job_grades.get(key, {})).get("fit", "look")), key))
+    order = sorted(people, key=lambda key: ("thread_of" in people[key],  # Their own post comes before a colleague's mention.
+                                            FITS.index((grades.get(key) or job_grades.get(key, {})).get("fit", "look")), key))
     for key in order:
-        entry, source = people[key], posts.get(key) or jobs[key]
-        grade = grades.get(key) or job_grades.get(key, {})
+        entry = people[key]
+        origin = entry.get("thread_of", key)  # An entry point stands on its colleague's post or job ad.
+        if origin not in posts and origin not in jobs or origin != key and not (people.get(origin) or {}).get("verified"):
+            continue  # Their colleague is no longer on the list, so neither are they.
+        source = posts.get(origin) or jobs[origin]
+        grade = grades.get(origin) or job_grades.get(origin, {})
         if grade.get("verdict") not in {"prospect", "mandate"}:
             continue  # Regraded after verification: the new verdict decides where they appear.
         name = source.get("author") or source.get("company")
@@ -1833,6 +1929,8 @@ def shortlist_rows(project):
                             f"You said {earlier} last time." if earlier else "Shown last time, not answered."))
             continue
         labels, fit = list(grade.get("labels", [])), grade.get("fit", "look")
+        if origin != key:  # They said nothing themselves: worth a look, beside the colleague who did.
+            labels, fit = [entry["identity_basis"]], "low" if fit == "low" else "look"
         if person.get("open_to_work"):
             # Still in a job: a buyer today who may move on. No job: no team to buy for yet.
             employed = person["role_basis"] != "headline only" and person["company"]
@@ -1849,12 +1947,12 @@ def shortlist_rows(project):
                 and compact(person["company"]) not in compact(headline)
                 and not any("employer" in label for label in labels)):
             labels.append("current employer not in the post's headline")
-        if key in jobs and entry.get("identity_basis") != "named owner title":
+        if key in jobs and entry.get("identity_basis") != "named owner title" and origin == key:
             labels.append(entry["identity_basis"])
         if key in jobs and len(compact(brand(jobs[key]["company"]))) <= 5:
             labels.append("short company name: confirm it is the same employer")
         rows[entry["profile_url"]] = {
-            "fit": fit, "kind": "hiring signal" if key in jobs else "firsthand post",
+            "fit": fit, "kind": "entry point" if origin != key else "hiring signal" if key in jobs else "firsthand post",
             "name": person["name"], "first_name": person.get("first_name", ""), "last_name": person.get("last_name", ""),
             "role": person["role"], "company": person["company"], "company_url": person.get("company_url") or "",
             "company_domain": entry.get("company_domain") or (
@@ -1866,13 +1964,14 @@ def shortlist_rows(project):
             "profile_url": entry["profile_url"], "role_basis": person["role_basis"],
             "identity_basis": entry.get("identity_basis", "author of the LinkedIn post"),
             "channel": entry["channel"], "source_url": source["url"], "published_on": source.get("published_on") or "",
-            "quote": norm(grade["quote"]), "why": norm(grade["why"]), "labels": labels, "other_sources": [],
-            "buying_now": grade.get("buying_now") is True,
+            "quote": norm(grade["quote"]), "labels": labels, "other_sources": [],
+            "why": norm(grade["why"]) if origin == key else f"Colleague of {((people.get(origin) or {}).get('verified') or {}).get('name', 'someone on this list')}: {norm(grade['why'])}",
+            "buying_now": grade.get("buying_now") is True and origin == key,
             "your_answer": votes.get(entry["profile_url"], {}).get("vote") or "",
             "your_note": votes.get(entry["profile_url"], {}).get("note") or "",
             "work_email": entry.get("work_email", {}).get("address", ""),
             "work_email_status": entry.get("work_email", {}).get("status", ""), "key": key, "id": key,
-            "x_handle": source["author"].lstrip("@") if entry["channel"] == "x" else "", "run_date": created,
+            "x_handle": source["author"].lstrip("@") if entry["channel"] == "x" and origin == key else "", "run_date": created,
             "found_by": "; ".join(source.get("found_by", []))}
     rows = prioritise(project, list(rows.values()), created)
     by_company = {}
@@ -1928,8 +2027,11 @@ def shortlist(project):
     customers = authors("customer") + customers + [
         (jobs[key]["company"], jobs[key]["url"], norm(grade.get("why")) or "Job ad from an existing customer.")
         for key, grade in job_grades.items() if grade["verdict"] == "customer"]
+    named = sum(row["kind"] == "entry point" for row in contact)
+    spoke = len(contact) - named
     lines = ["# Shortlist", "", " · ".join(f"{label}: {value}" for label, value in funnel(project).items()), "",
-             f"## Worth contacting ({len(contact)})", "", *table(contact)]
+             f"## Worth contacting ({spoke}" + (f", and {named} colleague{'s' * (named != 1)} they named)" if named else ")"),
+             "", *table(contact)]
     if low:
         lines += ["", f"## Low fit ({len(low)})", "", "Verified, with real evidence, but a weak match for this product.", "", *table(low)]
     sections = (("Already customers", customers), ("Left the product", authors("churned")),
@@ -1945,7 +2047,8 @@ def shortlist(project):
             lines += ["", f"## {title} ({len(found)})", ""] + [
                 f"- [{cell(item['name'])}]({item['url']}): {cell(item['reason'])}" for item in found]
     save(project / "shortlist.md", "\n".join(lines) + "\n")
-    print(f"{len(contact)} worth contacting ({sum(row['fit'] == 'strong' for row in rows)} strong), {len(low)} low fit, "
+    print(f"{spoke} worth contacting ({sum(row['fit'] == 'strong' for row in rows)} strong), "
+          + (f"{named} colleague{'s' * (named != 1)} they named, " if named else "") + f"{len(low)} low fit, "
           f"{sum(not item['job'] for item in held)} held, {sum(item['job'] for item in held)} job ads with no owner. "
           f"Open {project / 'shortlist.md'}.")
 
@@ -1967,9 +2070,11 @@ def funnel(project):
     try:
         rows, _, held, *_ = shortlist_rows(project)
         counts.update({
-            "Worth contacting": sum(row["fit"] != "low" for row in rows),
+            "Worth contacting": sum(row["fit"] != "low" and row["kind"] != "entry point" for row in rows),
+            # People a prospect credited have not spoken themselves, so they are counted apart, and only when there are any.
+            **({"Named colleagues": named} if (named := sum(row["fit"] != "low" and row["kind"] == "entry point" for row in rows)) else {}),
             "Strong": sum(row["fit"] == "strong" for row in rows),
-            "Low fit": sum(row["fit"] == "low" for row in rows),
+            "Low fit": sum(row["fit"] == "low" and row["kind"] != "entry point" for row in rows),
             "Accounts graded": len(load_accounts(project)[0]),
             "Held people": sum(not item["job"] for item in held),
             "Job ads with no owner": sum(item["job"] for item in held)})

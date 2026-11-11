@@ -106,10 +106,10 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 1. **Plan.** Your agent writes searches in your buyer's words, pairing a tool they use with a phrase like "we switched" or "our renewal".
 2. **Read.** It reads several hundred posts and keeps people describing their own team's work, dropping advice and sales pitches. It copies the sentence that shows it, and Pudding checks that sentence against the post.
-3. **Verify.** Pudding confirms who each person is and where they work now.
+3. **Verify.** Pudding confirms who each person is and where they work now. When a post credits a colleague for the work, Pudding adds them beside the person who posted.
 4. **Profile the employer.** Pudding records each employer's size, industry and one-line description. Your agent drops direct competitors and labels agencies and large companies.
 5. **Read job ads** from LinkedIn, Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. When an ad hands this work to a new hire, Pudding finds whoever owns it today and marks the row as a hiring signal.
-6. **Rank.** Your agent grades each employer against the accounts that matter most to you, and each person's reach: their audience, their track record and the teams they advise. The best accounts and people deciding now come first. Nobody is removed.
+6. **Rank.** Your agent grades each employer against the accounts that matter most to you, and each person's reach: their audience, their track record and the teams they advise. The best accounts and people deciding now come first, with colleagues kept together. Nobody is removed.
 7. **Review.** You answer yes, no or maybe. Low-fit people, existing customers and anyone Pudding couldn't identify sit in separate sections.
 8. **Enrich.** Pudding finds work email for your yes answers.
 

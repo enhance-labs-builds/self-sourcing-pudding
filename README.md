@@ -28,6 +28,12 @@ A hiring signal comes from a job ad that shows a team has the problem, and the r
 
 ![The review page: one person, their role and employer, the quote, and Yes, No and Maybe buttons](docs/review-page.jpg)
 
+## Why Pudding
+
+A job-title filter gives you everyone who could buy, and you write to all of them cold. Pudding gives you the people who said in public that they have the problem you solve, with their own words next to their name. You read the evidence before you decide, and your first message can start from something they wrote.
+
+Pudding works best when your buyers write in public, in English, about their work, and name their tools. B2B software sold to founders, engineers, operators and team leads fits. Test runs found 60 people for a code review tool, 25 for an AI-native CRM and 15 for AI support agents. Buyers who rarely post produce shorter lists.
+
 ## Quick start
 
 You need:
@@ -53,8 +59,6 @@ After 20 to 25 minutes your agent gives you a link to the review page. Press **Y
 Get work email for the people I said yes to in my latest Pudding run. It costs about US$0.03 a person, so raise that run's cap to cover it.
 ```
 
-Pudding works best when your buyers write in public, in English, about their work, and name their tools. B2B software sold to founders, engineers, operators and team leads fits. Test runs found 60 people for a code review tool, 25 for an AI-native CRM and 15 for AI support agents. Buyers who rarely post produce shorter lists.
-
 ## Cost
 
 | Item | Cost | Detail |
@@ -66,40 +70,17 @@ Pudding works best when your buyers write in public, in English, about their wor
 
 Treg is prepaid and advertises US$1 of starting credit for new accounts ([pricing](https://treg.to/pricing)). Your Treg balance is the outer limit on spend, so keep a few dollars in it and leave automatic top-ups off.
 
-## Guarantees
+## Safety
 
-Pudding's code enforces these. They hold whichever agent runs it.
+Pudding's code enforces these limits, whichever agent runs it:
 
-| Guarantee | How Pudding enforces it |
-| --- | --- |
-| **Spend stays under the cap** | Pudding reserves each lookup's worst-case cost under a lock before sending it, and tells Treg the most it may charge. It looks up the strongest people first and reports anything the cap left out. A reported charge above the reservation stops the run. |
-| **The cap never rises by itself** | Only the `budget` command raises it. Your agent can run that command, so the playbook forbids it unasked and your ask-before-each-command setting lets you refuse it. |
-| **Each lookup bills once** | Every lookup carries an idempotency key and a saved receipt, so reruns and crash recovery reuse what you paid for. An unsettled charge blocks new spending until Pudding can account for it. |
-| **Quotes are real** | `check` rejects any quote that doesn't appear word for word in the captured post or ad. |
-| **Identity is checked** | LinkedIn confirms each person's current role on the day of the run. An X author needs a LinkedIn link on their profile, or two checkable ties to one LinkedIn profile, one of them about the person. Rows your agent placed by name alone say so. |
-| **Email addresses are confirmed** | Pudding accepts one address at the employer's own domain, and a second provider must confirm the mailbox. |
-| **Your token goes to Treg alone** | Pudding sends it only to `treg.to`, follows no redirects, and stores only a hash. |
-| **Run data stays private** | Each run gets its own folder that only your account can read, with a `.gitignore` that excludes everything in it. Delete the folder to remove the data. |
-| **Web requests stay on the public internet** | Pudding fetches HTTPS only, refuses private network addresses at connection time, and limits each page to 512 KB and 20 seconds. |
-| **Strangers' text stays inert** | Pudding removes terminal escape codes and invisible characters before your agent reads anything, and labels every sheet as data. It neutralises spreadsheet formulas in the CSV and links and HTML in `shortlist.md`. |
-| **The review page stays on your computer** | It listens on `127.0.0.1` only, refuses other hostnames and origins, and loads nothing from elsewhere. |
+- **Spend stays under your cap.** Pudding reserves each lookup's worst-case cost before sending it.
+- **Quotes are real.** `check` rejects any quote that doesn't appear word for word in the captured post or ad.
+- **Identity is checked.** Pudding confirms each person's current role on the day of the run.
+- **Run data stays private.** Each run gets its own folder that only your account can read.
+- **Your accounts stay out of it.** Pudding never signs in to your LinkedIn or X.
 
-### What leaves your computer
-
-| Recipient | What it receives |
-| --- | --- |
-| Treg and [its data providers](#treg-and-data-sources) | The searches, names and profile links Pudding looks up. |
-| Your agent's model provider | The posts, names and quotes your agent reads. |
-| Websites | A request from your computer for your own site, each job ad, and any site linked from an X author's profile. |
-| Your LinkedIn and X accounts | Nothing. Pudding never signs in to them. |
-
-### Risks you still own
-
-**Prompt injection.** A stranger's post can contain text written to manipulate an AI. Pudding labels and cleans that text, and no filter can stop a model from being fooled. Three controls limit the damage: start your agent in an empty folder, approve each command yourself, and keep your Treg balance small.
-
-**Outreach.** Pudding reads public posts and contacts nobody. Platform terms and the privacy law where you and your prospects live, such as GDPR, decide whether and how you may write to someone. Read the quote and follow the source link before you do. The reason on each row is your agent's own sentence.
-
-See [SECURITY.md](SECURITY.md) to report a vulnerability.
+Two risks stay with you: a stranger's post can try to manipulate your agent, and the law where you and your prospects live decides whether you may write to someone. [docs/safety.md](docs/safety.md) covers every guarantee, what leaves your computer, and how to limit both risks.
 
 ## How a run works
 
@@ -142,49 +123,14 @@ A second model then saw each person's role, employer and quote, with no grades. 
 | Claude Sonnet 5.5 | 60 | 44 | 19 minutes | US$0.89 |
 | Codex (GPT-6.1) | 75 | 48 | 25 minutes | US$0.94 |
 
-## Reference
+## Documentation
 
-### Output
-
-Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; and your answer. The email step adds work email. Filter on `fit` and `your_answer`, and match against your CRM on `profile_url`.
-
-### Suppression lists
-
-Add `--suppress FILE` to the first run to leave out people you already know. The file can be a plain list or a CRM export, and weekly follow-ups keep using it.
-
-| Entry | Leaves out |
+| Page | What it tells you |
 | --- | --- |
-| LinkedIn profile link | That person |
-| Company name or LinkedIn company link | That company |
-| Work email or web domain | The company whose website is on that domain |
-
-### Treg and data sources
-
-Pudding buys every lookup through Treg. Behind Treg, HarvestAPI supplies LinkedIn data, AnyAPI and the X API supply X data, Serper and Exa supply web search, and AnyAPI and Hunter supply work email.
-
-Your agent installs Treg with its own installer (`curl -fsSL https://treg.to/install.sh | sh`) and signs you in with `treg login`. With a Treg team token, set `TREG_TOKEN` and `TREG_ORG` instead. Pudding refuses a team with its own provider keys connected, so every lookup counts against the cap. One read-only X connection is allowed.
-
-### Commands
-
-Your agent runs these from [the playbook](docs/playbook.md).
-
-| Command | Purpose |
-| --- | --- |
-| `connect` | Check the Treg sign-in. Free. |
-| `start URL` | Read the site and create the run folder. Options: `--budget-usd` (default 1.00), `--previous DIR`, `--suppress FILE`, `--window-days N` (default 45). |
-| `check` | Validate the plan and grades. |
-| `search` | Run the LinkedIn and X searches. |
-| `sheet` | Write the next batch of posts to read. `--jobs` for job ads. |
-| `show ID…` | Print posts or ads in full. |
-| `verify` | Confirm identity and current role, and describe the employer. |
-| `timeline @handle`, `web "query"` | Help place an X author: their recent posts, and a web search. |
-| `spider` | Optional. Read replies under graded posts. |
-| `jobs`, `contacts` | Find job ads, then the person who owns the work. `jobs --lookback-days N` (default 90). |
-| `shortlist` | Write `shortlist.md` and `shortlist.csv`. |
-| `review` | Start the review page and print its address. |
-| `enrich` | Find work email for your yes answers. |
-| `budget USD` | Raise this run's cap. |
-| `status` | Show the counts and spend. |
+| [docs/safety.md](docs/safety.md) | Each guarantee and how the code enforces it, what leaves your computer, and the risks you still own |
+| [docs/reference.md](docs/reference.md) | Output files, suppression lists, data sources and commands |
+| [docs/playbook.md](docs/playbook.md) | The steps your agent follows |
+| [examples/shortlist.md](examples/shortlist.md) | A sample shortlist, with fictional people |
 
 ## Development
 

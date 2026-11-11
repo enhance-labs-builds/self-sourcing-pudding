@@ -19,6 +19,6 @@ Pudding's agent reads text written by strangers and spends real money, so these 
 
 ## Out of scope
 
-- A model obeying an instruction it read in a post, when Pudding delivered that text labelled as data with hidden characters removed. No filter can rule this out. The README lists the controls that limit the damage. A new way to get past Pudding's labelling or filtering is in scope.
+- A model obeying an instruction it read in a post, when Pudding delivered that text labelled as data with hidden characters removed. No filter can rule this out. [docs/safety.md](docs/safety.md) lists the controls that limit the damage. A new way to get past Pudding's labelling or filtering is in scope.
 - Bugs in Treg or its data providers. Report those to Treg.
 - Anything that needs an attacker to already control your user account.

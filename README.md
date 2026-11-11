@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/pudding.webp" alt="Self-Sourcing Pudding: a felt pudding holding a pair of binoculars" width="180">
+  <img src="docs/pudding.png" alt="A felt pudding holding a pair of binoculars" width="180">
 </p>
 
 <h1 align="center">Self-Sourcing Pudding</h1>

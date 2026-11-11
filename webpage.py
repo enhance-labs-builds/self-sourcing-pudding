@@ -6,14 +6,31 @@ import re
 import socket
 import ssl
 from html.parser import HTMLParser
+from time import monotonic
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 
 USER_AGENT = "SelfSourcingPudding/0.3 (+https://github.com/enhance-labs-builds/self-sourcing-pudding)"
+PAGE_BYTES = 512 * 1024
+PAGE_SECONDS = 20
+# Characters a reader can't see but a model reads: zero-width and direction marks, and the Unicode tag block.
+INVISIBLE = re.compile("[­​-‏‪-‮⁠-⁤⁦-⁯﻿\U000e0000-\U000e007f]")
 
 
 def terminal_text(value):
-    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", " ", value)
+    """Text from the web, safe to print or hand to an agent: no terminal escapes, nothing hidden."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", " ", INVISIBLE.sub("", value))
+
+
+def read_limited(response, limit=PAGE_BYTES):
+    """Stop at the size limit or the deadline, so a server dripping bytes can't hold a run open."""
+    deadline, body = monotonic() + PAGE_SECONDS, bytearray()
+    while len(body) < limit and monotonic() < deadline:
+        chunk = response.read1(min(64 * 1024, limit - len(body)))
+        if not chunk:
+            break
+        body += chunk
+    return bytes(body)
 
 
 def public_url(value, *, keep_query=False):
@@ -60,7 +77,9 @@ def fetch_page(url):
                     continue
                 if response.status != 200 or "text/html" not in response.getheader("Content-Type", "").lower():
                     raise ValueError(f"Could not read the company page (HTTP {response.status}).")
-                return url, response.read(512 * 1024).decode("utf-8", errors="replace")
+                return url, read_limited(response).decode("utf-8", errors="replace")
+        except http.client.HTTPException as error:  # A malformed link or reply is one unreadable page, not a failed run.
+            raise ValueError(f"Could not read the page ({type(error).__name__}).") from error
         finally:
             conn.close()
     raise ValueError("The company page redirected too many times.")

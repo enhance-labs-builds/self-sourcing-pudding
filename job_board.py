@@ -8,7 +8,7 @@ from urllib.parse import quote, unquote, urlsplit
 from urllib.request import Request, build_opener
 
 from treg import NoRedirect
-from webpage import USER_AGENT
+from webpage import USER_AGENT, read_limited
 
 BOARDS = ("job-boards.greenhouse.io", "jobs.ashbyhq.com", "myworkdayjobs.com")
 BUYER_BOARDS = (*BOARDS, "jobs.lever.co", "jobs.smartrecruiters.com", "apply.workable.com")
@@ -86,7 +86,7 @@ class PostingHTML(HTMLParser):
 def fetch(url):
     request = Request(url, headers={"Accept": "*/*", "User-Agent": USER_AGENT})
     with build_opener(NoRedirect).open(request, timeout=8) as response:
-        raw = response.read(1024 * 1024 + 1)
+        raw = read_limited(response, 1024 * 1024 + 1)
     if len(raw) > 1024 * 1024:
         raise ValueError("Job response is too large.")
     return raw.decode("utf-8")

@@ -9,11 +9,15 @@ from datetime import datetime, timezone
 import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import threading
 
 import pudding
 import treg as t
 
 VOTES = {"yes", "no", "maybe"}
+SAVING = threading.Lock()  # Answers given in quick succession must not overwrite each other.
+CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "
+       "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -158,18 +162,19 @@ def record(project, rows, payload):
     profile, vote, note = payload.get("profile_url"), payload.get("vote"), payload.get("note", "")
     if profile not in {row["profile_url"] for row in rows} or vote not in VOTES | {None} or not isinstance(note, str):
         raise ValueError("Unknown person or answer.")
-    votes = load_votes(project)
-    if vote is None and not note.strip():
-        votes.pop(profile, None)
-    else:
-        votes[profile] = {"vote": vote, "note": note.strip()[:1000], "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    t.atomic_json(project / "review.json", votes)
-    try:  # The CSV and the markdown shortlist carry the answer too, so they are rewritten with it.
-        with contextlib.redirect_stdout(io.StringIO()):
-            pudding.shortlist(project)
-    except (ValueError, OSError):
-        pass
-    return votes
+    with SAVING:
+        votes = load_votes(project)
+        if vote is None and not note.strip():
+            votes.pop(profile, None)
+        else:
+            votes[profile] = {"vote": vote, "note": note.strip()[:1000], "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        t.atomic_json(project / "review.json", votes)
+        try:  # The CSV and the markdown shortlist carry the answer too, so they are rewritten with it.
+            with contextlib.redirect_stdout(io.StringIO()):
+                pudding.shortlist(project)
+        except (ValueError, OSError):
+            pass
+        return votes
 
 
 def handler(project, rows, title):
@@ -181,6 +186,8 @@ def handler(project, rows, title):
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", CSP)
             self.end_headers()
             self.wfile.write(data)
 
@@ -198,10 +205,15 @@ def handler(project, rows, title):
             self.send(404, "Not found", "text/plain")
 
         def do_POST(self):
-            if not self.local() or self.path != "/vote" or self.headers.get("Content-Type") != "application/json":
+            origin = self.headers.get("Origin")
+            if (not self.local() or self.path != "/vote" or self.headers.get("Content-Type") != "application/json"
+                    or origin not in (None, f"http://{self.headers.get('Host')}")):
                 return self.send(403, "Forbidden", "text/plain")
             try:
-                payload = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 10_000)))
+                length = int(self.headers.get("Content-Length", 0))
+                if not 0 < length <= 10_000:
+                    raise ValueError("Bad length.")
+                payload = json.loads(self.rfile.read(length))
                 votes = record(project, rows, payload if isinstance(payload, dict) else {})
             except (ValueError, TypeError):
                 return self.send(400, "Bad request", "text/plain")

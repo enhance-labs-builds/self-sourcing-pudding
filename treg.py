@@ -194,7 +194,10 @@ def journal(out, plan, org, resume, *, caller=None):
         (out / ".gitignore").write_text("*\n", encoding="utf-8")
         (out / ".gitignore").chmod(0o600)
     with open(os.open(out / ".lock", os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600), "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("Another Pudding step is running in this folder. Let it finish, then try again.") from None
         path = out / "treg-run.json"
         if resume:
             state = json.loads(path.read_text(encoding="utf-8"))
@@ -381,11 +384,21 @@ class Lookups:
         return None
 
 
+def linkedin_page(url):
+    """Split an https://linkedin.com address. Anything else, including a malformed one, is None."""
+    try:
+        parsed = urlsplit(url) if isinstance(url, str) else None
+        if (parsed and parsed.scheme == "https" and parsed.hostname in {"linkedin.com", "www.linkedin.com"}
+                and parsed.username is None and parsed.port in (None, 443)):
+            return parsed
+    except ValueError:
+        pass
+    return None
+
+
 def linkedin_url(url, kind):
-    parsed = urlsplit(url or "")
-    if (parsed.scheme == "https" and parsed.hostname in {"linkedin.com", "www.linkedin.com"}
-            and parsed.username is None and parsed.port in (None, 443)
-            and re.fullmatch(rf"/{kind}/[\w%.-]+/?", parsed.path)):
+    parsed = linkedin_page(url)
+    if parsed and re.fullmatch(rf"/{kind}/[\w%.-]+/?", parsed.path):
         return "https://www.linkedin.com" + parsed.path.rstrip("/").lower()
     return None
 
@@ -399,7 +412,7 @@ def linkedin_posts(data):
     for row in data["elements"]:
         author = row.get("author") or {}
         url, body = row.get("linkedinUrl"), row.get("content")
-        if not url or urlsplit(url).hostname not in {"linkedin.com", "www.linkedin.com"} or not body:
+        if not linkedin_page(url) or not body:
             continue
         stamp = (row.get("postedAt") or {}).get("date")
         output.append({
@@ -414,10 +427,9 @@ def linkedin_comments(data):
     output = []
     for row in data["elements"]:
         actor = row.get("actor") or {}
-        url = urlsplit(row.get("linkedinUrl") or "")
+        url = linkedin_page(row.get("linkedinUrl"))
         body = row.get("commentary")
-        if (url.scheme != "https" or url.hostname not in {"linkedin.com", "www.linkedin.com"}
-                or url.username is not None or url.port not in {None, 443} or not url.path or not body):
+        if not url or not url.path or not body:
             continue
         stamp = row.get("createdAt")
         output.append({
@@ -496,10 +508,7 @@ def linkedin_job(data):
     industries = [item.get("name") for item in company.get("industries") or [] if isinstance(item, dict) and item.get("name")]
     team = []
     for person in row.get("hiringTeam") or []:
-        try:
-            profile = linkedin_profile(re.sub(r"://[a-z]{2,3}\.linkedin", "://www.linkedin", str(person.get("linkedinUrl") or "")))
-        except ValueError:
-            profile = None
+        profile = linkedin_profile(re.sub(r"://[a-z]{2,3}\.linkedin", "://www.linkedin", str(person.get("linkedinUrl") or "")))
         if profile:
             team.append({"profile": profile, "name": " ".join(str(person.get("name") or "").split())[:80]})
     page = re.match(r"https://www\.linkedin\.com/company/[\w%.-]+", str(company.get("linkedinUrl") or ""))
@@ -515,10 +524,7 @@ def linkedin_people(data):
     """A page of LinkedIn's people search: each profile with the line it shows under the name."""
     output = []
     for row in data.get("elements") or []:
-        try:
-            profile = linkedin_profile(str(row.get("linkedinUrl") or ""))
-        except ValueError:
-            profile = None
+        profile = linkedin_profile(row.get("linkedinUrl"))
         if profile:
             output.append({"profile": profile, "name": " ".join(str(row.get("name") or "").split())[:80],
                            "text": " ".join(str(row.get("position") or "").split())[:200]})
@@ -526,12 +532,4 @@ def linkedin_people(data):
 
 
 def linkedin_links(links):
-    profiles = set()
-    for link in links:
-        if isinstance(link, str):
-            try:
-                if profile := linkedin_profile(link):
-                    profiles.add(profile)
-            except ValueError:
-                continue
-    return profiles
+    return set(filter(None, map(linkedin_profile, links)))

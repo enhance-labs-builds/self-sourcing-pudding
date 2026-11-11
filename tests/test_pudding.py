@@ -120,6 +120,36 @@ class AgentRunTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fit must be"):
             pudding.check_grades(self.project)
 
+    def test_open_to_work_is_labelled_and_without_a_job_is_low_fit(self):
+        posts = {}
+        others = [{**POST, "author": f"Bo {n}", "profile": f"https://www.linkedin.com/in/bo{n}",
+                   "url": POST["url"].replace("0001", f"000{n}")} for n in (2, 3, 4)]
+        pudding.add_posts(posts, [POST, *others], "q")
+        self.write("posts.json", posts)
+        grade = {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1 in March."}
+        self.write("grades.json", {key: grade for key in posts})
+        cases = {  # profile: (current roles, headline, LinkedIn's open-to-work flag)
+            "https://www.linkedin.com/in/ada": ([{"position": "CTO", "companyName": "Fig"}], "CTO at Fig", True),
+            "https://www.linkedin.com/in/bo2": ([], "Engineer | Open to Work", False),
+            "https://www.linkedin.com/in/bo3": ([], "Engineer", True),
+            "https://www.linkedin.com/in/bo4": ([{"position": "CEO", "companyName": "Pear"}], "CEO at Pear", False)}
+
+        def call(endpoint, params, transform):
+            roles, headline, flag = cases[params["url"]]
+            data = profile(roles, headline=headline, url=params["url"])
+            data["element"]["openToWork"] = flag
+            return transform(data)
+
+        pudding.verify(self.project, call, 10)
+        pudding.shortlist(self.project)
+        with (self.project / "shortlist.csv").open(newline="") as file:
+            rows = {row["profile_url"]: row for row in csv.DictReader(file)}
+        employed, said, flagged, plain = (rows[url] for url in cases)
+        self.assertEqual((employed["fit"], "open to work" in employed["labels"]), ("strong", True))
+        for row in (said, flagged):
+            self.assertEqual((row["fit"], "open to work, no current role" in row["labels"]), ("low", True))
+        self.assertEqual((plain["fit"], "open to work" in plain["labels"]), ("strong", False))
+
     def test_role_rules_say_which_evidence_was_used(self):
         url = "https://www.linkedin.com/in/ada"
         one = {"position": "CEO", "companyName": "Fig"}

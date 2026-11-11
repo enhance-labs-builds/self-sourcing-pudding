@@ -67,6 +67,7 @@ JOB_AD = re.compile(
     r"(?:engineer|developer|manager|designer|lead|specialist|analyst)\b|join (?:our|my|the) team|job (?:opening|description|opportunity)|"
     r"open (?:role|position)s?\b|apply (?:now|here|today|via|at|below)|to apply\b|years? of experience|position overview|"
     r"need profiles|send (?:me )?your (?:cv|resume)|\bopportunity at\b", re.I)
+OPEN_TO_WORK = re.compile(r"open\s?to\s?work|#opentowork|open to (?:new )?(?:roles|opportunities)|seeking (?:new )?(?:roles|opportunities)", re.I)
 JOB_HUNT = re.compile(
     r"open ?to ?(?:work|new opportunit|opportunit|roles|offers)|#opentowork|#jobsearch|looking for (?:my|a|an|new)(?: new| next)? "
     r"(?:role|opportunit|position|job|challenge)|(?:my|a) next (?:role|opportunity|position|chapter)|seeking (?:a |new |my )"
@@ -803,7 +804,8 @@ def linkedin_result(hit):
 def slim_profile(data):
     row = data.get("element") or {}
     return {"element": {key: row.get(key) for key in
-                        ("firstName", "lastName", "headline", "linkedinUrl", "currentPosition", "experience", "location")}}
+                        ("firstName", "lastName", "headline", "linkedinUrl", "currentPosition", "experience", "location",
+                         "openToWork")}}
 
 
 def current_role(data, profile):
@@ -816,7 +818,9 @@ def current_role(data, profile):
         return None
     place = row.get("location") if isinstance(row.get("location"), dict) else {}
     extra = {"first_name": row.get("firstName") or "", "last_name": row.get("lastName") or "",
-             "location": place.get("linkedinText") or "", "country": place.get("countryCode") or ""}
+             "location": place.get("linkedinText") or "", "country": place.get("countryCode") or "",
+             # LinkedIn's #OpenToWork frame, or the same said in the headline.
+             "open_to_work": row.get("openToWork") is True or bool(OPEN_TO_WORK.search(row.get("headline") or ""))}
     roles = [r for r in row.get("currentPosition") or []
              if r.get("position") and r.get("companyName") and not (r.get("endDate") or {}).get("year")]
     basis = "current role" if len(roles) == 1 else f"{len(roles)} concurrent roles"
@@ -1616,7 +1620,12 @@ def shortlist_rows(project):
             repeats.append((f"{person['name']}, {person['company']}", source["url"],
                             f"You said {earlier} last time." if earlier else "Shown last time, not answered."))
             continue
-        labels = list(grade.get("labels", []))
+        labels, fit = list(grade.get("labels", [])), grade.get("fit", "look")
+        if person.get("open_to_work"):
+            # Still in a job: a buyer today who may move on. No job: no team to buy for yet.
+            employed = person["role_basis"] != "headline only" and person["company"]
+            labels.append("open to work" if employed else "open to work, no current role")
+            fit = fit if employed else "low"
         if entry.get("seller"):
             labels.append(f"possible seller: {entry['seller']}")
         if entry.get("identity_note"):
@@ -1633,7 +1642,7 @@ def shortlist_rows(project):
         if key in jobs and len(compact(brand(jobs[key]["company"]))) <= 5:
             labels.append("short company name: confirm it is the same employer")
         rows[entry["profile_url"]] = {
-            "fit": grade.get("fit", "look"), "kind": "hiring signal" if key in jobs else "firsthand post",
+            "fit": fit, "kind": "hiring signal" if key in jobs else "firsthand post",
             "name": person["name"], "first_name": person.get("first_name", ""), "last_name": person.get("last_name", ""),
             "role": person["role"], "company": person["company"], "company_url": person.get("company_url") or "",
             "company_domain": entry.get("company_domain") or (

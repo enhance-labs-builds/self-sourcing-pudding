@@ -192,6 +192,7 @@ P0012 Ada Example: CTO, Fig · 59 people on LinkedIn · Software Development · 
 - If the user told you who they do and don't want, that decides it.
 - A company far larger or smaller than the buyer you were given, or in the wrong business: `low`, or `look` with a label such as `larger company`.
 - A role that contradicts the post: change the grade to match what is true now.
+- Someone open to work, by LinkedIn's banner or their headline, is labelled `open to work`. If they still have a job, their grade stands: they can buy now, and may move on. If they have no current role, the shortlist puts them in low fit, since there is no team to buy for yet.
 
 ### Held X authors
 

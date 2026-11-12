@@ -4,7 +4,7 @@ Every person, company, post and address here is fictional, and so are the counts
 
 Posts captured: 6 · Authors: 6 · Authors graded: 6 · Prospects: 5 · Customers: 1 · Left the product: 0 · Built their own: 0 · Borderline: 0 · Job ads found: 1 · Job ads graded: 1 · Job mandates: 1 · Worth contacting: 4 · Named colleagues: 1 · Strong: 2 · Low fit: 1 · Accounts graded: 5 · Held people: 1 · Job ads with no owner: 0 · Spend: US$0.06 over 19 lookups
 
-## Worth contacting (4, and 1 colleague they named)
+## Worth contacting (4: 2 at A accounts, 2 at B accounts, and 1 colleague they named)
 
 | # | Fit | Person | Current role | Evidence | Why | Labels |
 |---|---|---|---|---|---|---|

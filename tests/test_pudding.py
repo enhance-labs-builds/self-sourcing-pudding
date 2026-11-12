@@ -1003,7 +1003,7 @@ class AgentRunTest(unittest.TestCase):
         pudding.start(again, "https://example.com", "1.00", None, previous=earlier)
         from datetime import date, datetime, timezone
         gap = (datetime.now(timezone.utc).date() - date(2026, 11, 10)).days + 2
-        self.assertEqual(json.loads((again / "project.json").read_text())["window_days"], max(7, min(45, gap)))
+        self.assertEqual(json.loads((again / "project.json").read_text())["window_days"], max(7, min(30, gap)))
         self.assertFalse((again / "suppress.json").exists())
         t.atomic_json(earlier / "suppress.json", {"profiles": [], "companies": ["Pear"], "domains": [], "company_pages": [], "unread": 0})
         third = Path(folder.name) / "third"
@@ -1011,7 +1011,7 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(json.loads((third / "suppress.json").read_text())["companies"], ["Pear"])
         fresh = Path(folder.name) / "first"
         pudding.start(fresh, "https://example.com", "1.00", None)
-        self.assertEqual(json.loads((fresh / "project.json").read_text())["window_days"], 45)
+        self.assertEqual(json.loads((fresh / "project.json").read_text())["window_days"], 30)
         self.write("posts.json", posts)
         self.write("grades.json", {"P0001": grade, "P0002": grade})
         self.write("people.json", {"P0001": entry(POST, "Ada Example"), "P0002": entry(other, "Bo New")})
@@ -1034,6 +1034,26 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(("evaluating a move off Tool1" in sheet, sheet.count("**Ada Example**")), (True, 1))
         self.assertEqual(len(pudding.plan_notes({**PLAN, "customers": []})), 1)
         self.assertEqual(pudding.plan_notes({**PLAN, "customers": []}, searched=True), [])
+
+    def test_enrich_says_how_many_people_it_left(self):
+        posts = {}
+        for n, author in enumerate(("Ada Example", "Bo Pear"), 1):
+            pudding.add_posts(posts, [{**POST, "author": author, "profile": f"https://www.linkedin.com/in/p{n}",
+                                         "url": POST["url"].replace("0001", f"00{n}0")}], "q")
+        self.write("posts.json", posts)
+        grade = {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1 in March."}
+        self.write("grades.json", {"P0001": grade, "P0002": grade})
+        self.write("people.json", {key: {"channel": "linkedin", "source_url": posts[key]["url"], "hold": None,
+                                         "profile_url": posts[key]["profile"],
+                                         "verified": {"name": posts[key]["author"], "role": "CEO", "company": company,
+                                                      "role_basis": "current role", "other_roles": []}}
+                                   for key, company in (("P0001", "Fig"), ("P0002", "Pear"))})
+        out = io.StringIO()
+        with mock.patch.object(pudding, "work_email", return_value={"status": "no address found"}) as lookup, \
+                contextlib.redirect_stdout(out):
+            pudding.enrich(self.project, None, 1, everyone=True)
+        self.assertEqual(lookup.call_count, 1)
+        self.assertIn("1 more were not looked up. Pass --limit 2", out.getvalue())
 
     def test_work_email_needs_the_employers_domain_and_a_verified_mailbox(self):
         posts = {}
@@ -1812,6 +1832,148 @@ class AgentRunTest(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertFalse(pudding.main(["--project", str(self.project), "check"]))
         self.assertIn("accounts.json grades 2 IDs that are not on the list, so they change nothing: P0009, figg.", out.getvalue())
+
+    def test_a_second_pass_is_reported_then_read_first(self):
+        def linkedin_post(n, text):
+            return {"linkedinUrl": f"https://www.linkedin.com/posts/person{n}_activity-70000000000000000{n:02d}-abcd", "content": text,
+                    "postedAt": {"date": "2026-11-01T00:00:00Z"},
+                    "author": {"name": f"Person {n}", "linkedinUrl": f"https://www.linkedin.com/in/person{n}", "info": "Founder"}}
+
+        found = {'"Tool0" "we switched"': [linkedin_post(1, "We switched off Tool0 and our team rebuilt the pipeline."),
+                                           linkedin_post(2, "We switched to Tool0 last year. Our team loves it.")],
+                 '"Tool1" "we switched"': [linkedin_post(3, "We switched off Tool1. Webinar on Tuesday, register now.")],
+                 '"Tool0" "our pipeline broke"': [linkedin_post(4, "Our pipeline broke again and our team is stuck."),
+                                                  linkedin_post(1, "We switched off Tool0 and our team rebuilt the pipeline.")]}
+        call = lambda endpoint, params, transform: transform({"elements": found.get(params.get("search"), [])}) if endpoint == t.LINKEDIN else []
+        first = ['"Tool0" "we switched"', '"Tool1" "we switched"', *PLAN["linkedin_queries"][2:6]]
+        self.write("plan.json", {**PLAN, "linkedin_queries": first, "x_queries": []})
+        pudding.search(self.project, call)
+        self.write("grades.json", {"P0001": {"verdict": "prospect", "fit": "strong", "why": "Own team.",
+                                             "quote": "We switched off Tool0 and our team rebuilt the pipeline."},
+                                   "P0002": "no", "P0003": "no"})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertFalse(pudding.main(["--project", str(self.project), "searches"]))
+        self.assertIn("1 of 6 searches gave a prospect.", out.getvalue())
+        report = (self.project / "searches.md").read_text()
+        self.assertIn('| `"Tool0" "we switched"` | 2 | 2 | 1 |', report)   # The one to keep comes first.
+        self.assertIn('| `"Tool1" "we switched"` | 1 | 1 | 0 |', report)
+        self.assertLess(report.index("Tool0"), report.index("Tool1"))
+        # The second pass: the dead search is replaced. Its posts stay, and the new search's posts are read first.
+        self.write("plan.json", {**PLAN, "linkedin_queries": [first[0], '"Tool0" "our pipeline broke"', *first[2:]], "x_queries": []})
+        pudding.search(self.project, call)
+        self.assertEqual(json.loads((self.project / "searches.json").read_text()), [first, ['"Tool0" "our pipeline broke"']])
+        pudding.sheet(self.project, 10)
+        sheet = (self.project / "sheet.md").read_text()
+        self.assertIn("## P0004 · linkedin post · new search · 2026-11-01", sheet)
+        self.assertNotIn("P0001", sheet)  # Already graded: a post an old search also found is not new.
+        pudding.search(self.project, call)  # Running it again adds no pass.
+        self.assertEqual(len(json.loads((self.project / "searches.json").read_text())), 2)
+
+    def test_verify_spends_on_people_worth_contacting_and_lists_low_fit_unchecked(self):
+        posts = {}
+        pudding.add_posts(posts, [POST, {**POST, "author": "Bo Example", "profile": "https://www.linkedin.com/in/bo",
+                                         "url": "https://www.linkedin.com/posts/bo_activity-7000000000000000002-abcd"}], "q")
+        self.write("posts.json", posts)
+        grade = {"verdict": "prospect", "why": "Own team.", "quote": "We switched off Tool1 in March."}
+        self.write("grades.json", {"P0001": {**grade, "fit": "strong"}, "P0002": {**grade, "fit": "low", "why": "Just chose a competitor."}})
+        asked = []
+
+        def call(endpoint, params, transform):
+            asked.append(params.get("url"))
+            if endpoint == t.COMPANY:
+                return None
+            return transform(profile([{"position": "CEO", "companyName": "Fig"}], url=params["url"]))
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pudding.verify(self.project, call, 5)
+            pudding.shortlist(self.project)
+        self.assertEqual(asked, ["https://www.linkedin.com/in/ada"])  # Nothing was spent on the weak match.
+        self.assertIn("1 low-fit prospects were not checked", out.getvalue())
+        page = (self.project / "shortlist.md").read_text()
+        self.assertIn("## Low fit, not checked (1)", page)
+        self.assertIn("- [Bo Example](https://www.linkedin.com/posts/bo_activity-7000000000000000002-abcd): Just chose a competitor.", page)
+        pudding.verify(self.project, call, 5, low=True)  # On request, they are checked like anyone else.
+        self.assertEqual(asked[-1], "https://www.linkedin.com/in/bo")
+        pudding.shortlist(self.project)
+        self.assertNotIn("Low fit, not checked", (self.project / "shortlist.md").read_text())
+
+    def test_the_accounts_sheet_shows_in_full_only_people_with_something_to_weigh(self):
+        page = lambda slug: f"https://www.linkedin.com/company/{slug}"
+        self.ranked_run([("P0001", "strong", "CEO", "Fig", page("fig")), ("P0002", "look", "Engineer", "Pear", page("pear")),
+                         ("P0003", "look", "Fractional CTO", "Solo Example", page("solo"))])
+        people = json.loads((self.project / "people.json").read_text())
+        for key in ("P0002", "P0003"):  # No audience and no new role.
+            people[key]["verified"].update(followers=120, creator=False, role_started="Jan 2020")
+        self.write("people.json", people)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pudding.accounts(self.project, lambda endpoint, params, transform: None)
+        sheet = (self.project / "accounts-sheet.md").read_text()
+        self.assertIn("### P0001 · CEO @ Fig (fig)", sheet)            # 12,000 followers.
+        self.assertIn("### P0003 · Fractional CTO @ Solo Example", sheet)  # A connector's title.
+        self.assertIn("### Nothing to weigh (1)\n\n- P0002 · Engineer @ Pear · 120 followers", sheet)
+        self.assertIn("2 people shown in full (the other 1 count as C reach)", out.getvalue())
+
+    def test_contacts_covers_the_four_best_ads_and_says_what_it_left(self):
+        jobs, grades = {}, {}
+        for n in range(1, 7):
+            key = f"J{n:03d}"
+            jobs[key] = {"id": key, "url": f"https://jobs.example/co{n}/lead", "company": f"Company{n} Example", "title": "RevOps lead",
+                         "published_on": "2026-10-01", "text": "You will choose our CRM and own the migration.", "found_by": ["q"]}
+            grades[key] = {"verdict": "mandate", "fit": "strong" if n > 2 else "look", "quote": "You will choose our CRM",
+                           "owner_titles": ["Head of Revenue Operations"], "why": "Choosing a CRM.", **({"buying_now": True} if n == 6 else {})}
+        self.write("jobs.json", jobs)
+        self.write("job-grades.json", grades)
+        self.write("posts.json", {})
+        self.write("grades.json", {})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pudding.job_contacts(self.project, lambda endpoint, params, transform: None, per_job=2)
+        tried = [line.split()[0] for line in out.getvalue().splitlines() if line.startswith("J0")]
+        self.assertEqual(tried, ["J006", "J003", "J004", "J005"])  # Strong first, and the ad that has the hire choose a tool before the rest.
+        self.assertIn("2 more ads have no owner looked up: contacts covers the 4 best. `contacts --limit 6` finds the rest", out.getvalue())
+
+    def test_a_handle_that_is_only_their_name_is_not_a_second_tie(self):
+        person = {"name": "Ada Example", "first_name": "Ada", "last_name": "Example", "role": "Field Technician",
+                  "company": "Plum Drinks", "other_roles": []}
+        account = {"name": "Ada Example", "handle": "adaexample", "bio": "building things", "website": "", "site": "", "site_text": ""}
+        who, where = pudding.x_ties(person, None, account, "https://www.linkedin.com/in/adaexample")
+        self.assertEqual((who, where), (["the same name", "the same handle, which is their name"], []))
+        self.assertFalse(pudding.x_confirmed("web search: same name and the same handle", who, where, account))  # A namesake passes both.
+        coined = {**account, "handle": "shipfast"}
+        who, where = pudding.x_ties(person, None, coined, "https://www.linkedin.com/in/shipfast")
+        self.assertEqual(who, ["the same name", "the same handle"])
+        self.assertTrue(pudding.x_confirmed("web search: same name and the same handle", who, where, coined))  # A coined handle is theirs.
+
+    def test_the_headline_says_how_much_of_the_list_is_at_accounts_that_matter(self):
+        page = lambda slug: f"https://www.linkedin.com/company/{slug}"
+        people = [("P0001", "strong", "CEO", "Fig", page("fig")), ("P0002", "look", "CTO", "Pear", page("pear")),
+                  ("P0003", "look", "Founder", "Tiny Example", page("tiny"))]
+        self.ranked_run(people)
+        pudding.shortlist(self.project)
+        self.assertIn("## Worth contacting (3)", (self.project / "shortlist.md").read_text())  # Nothing graded: no split to show.
+        self.ranked_run(people, {"companies": {"fig": {"grade": "A", "why": "Series B."}, "tiny": {"grade": "C", "why": "One person."}},
+                                 "people": {}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pudding.shortlist(self.project)
+        self.assertIn("## Worth contacting (3: 1 at A accounts, 1 at B accounts, 1 at C accounts)", (self.project / "shortlist.md").read_text())
+        self.assertIn("3 worth contacting (1 strong; 1 at A accounts, 1 at B accounts, 1 at C accounts)", out.getvalue())
+
+    def test_the_reading_sheet_reads_a_fresher_post_first_when_two_say_as_much(self):
+        text = "We switched off Tool1 and our team rebuilt the pipeline."
+        posts = {}
+        pudding.add_posts(posts, [
+            {**POST, "author": "Old Example", "profile": "https://www.linkedin.com/in/old", "published_on": "2026-10-15", "text": text.replace("the pipeline", "our pipeline"),
+             "url": "https://www.linkedin.com/posts/old_activity-7000000000000000011-abcd"},
+            {**POST, "author": "New Example", "profile": "https://www.linkedin.com/in/new", "published_on": "2026-11-08", "text": text,
+             "url": "https://www.linkedin.com/posts/new_activity-7000000000000000012-abcd"}], '"Tool1" "we switched"')
+        self.write("posts.json", posts)
+        pudding.sheet(self.project, 10)
+        sheet = (self.project / "sheet.md").read_text()
+        self.assertLess(sheet.index("New Example"), sheet.index("Old Example"))
 
 if __name__ == "__main__":
     unittest.main()

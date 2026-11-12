@@ -13,18 +13,22 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT licence"></a>
 </p>
 
-Pudding turns a company URL into a shortlist of people who have the problem you solve and have said so in public. Your coding agent searches LinkedIn, X and job ads, reads what people wrote and grades the evidence. Pudding confirms each person's identity and current role, enforces your spend cap, and rejects any quote that isn't in the original post. You finish on a page on your own computer, answering yes or no to each person.
+Pudding turns a company URL into a shortlist of people who have the problem you solve and have said so in public. Your coding agent searches LinkedIn, X and job ads, reads what people wrote and grades the evidence. Pudding confirms each person's identity and current role, enforces your spend cap, and rejects any quote that isn't in the original post. You get a ranked CSV ready for your outreach tool, with the accounts you most want and anyone in the middle of choosing a tool at the top.
 
-Pudding runs locally on the Python standard library and costs about US$1 a run. It doesn't sign in as you and it contacts nobody.
+Pudding is free and runs on your own computer. Setup is one prompt pasted into the coding agent you already use. A run buys under US$1 of lookups from [Treg](https://treg.to), a pay-per-call marketplace for data, which starts new teams with US$1 of free credit. Pudding never signs in to your LinkedIn or X, and it contacts nobody.
 
-**On our own product: [60 people worth contacting, 19 minutes, US$0.89](#results).**
+**We make a review tool for coding agents and pointed Pudding at our own market: [72 people worth contacting in 23 minutes, for US$0.81 of lookups](#results).** Every post and job ad behind the list was from the last 30 days, and nearly half from the last week. They include a founder who can't find a way around the pull-request bottleneck, and a co-founder looking to replace their AI code reviewer.
+
+Each row carries the person's LinkedIn link, their quote and the link to where they said it, so the list loads straight into the tool you send from. We load ours into HeyReach. Pudding can also find work email, leave out anyone already in your CRM, and run again each week for whoever has posted since. To cut the list first, a page on your own computer takes a yes, no or maybe for each person, and your answers steer next week's searches.
+
+A shortlist looks like this. These two rows come from the [sample shortlist](examples/shortlist.md), which uses invented people:
 
 | Fit | Person | Current role | Evidence |
 | --- | --- | --- | --- |
 | strong | Priya Rowan | Procurement Operations Manager, Ashmere Hospitality | “Our approvals contract is up for renewal in March and we're evaluating alternatives.” |
 | worth a look · hiring signal | Idris Vale | Head of Procurement, Hollis Bay Health | “You will choose and roll out our first purchase-approvals system” |
 
-A hiring signal comes from a job ad that shows a team has the problem, and the row names whoever owns that work today. These people are fictional. The [sample shortlist](examples/shortlist.md) and [CSV](examples/shortlist.csv) come from the same code a real run uses.
+A hiring signal comes from a job ad that shows a team has the problem. The quote is from the ad, and the row names whoever owns that work today. The sample and its [CSV](examples/shortlist.csv) come from the same code a real run uses.
 
 ![The review page: one person, their role and employer, the quote, and Yes, No and Maybe buttons](docs/review-page.jpg)
 
@@ -47,25 +51,30 @@ If your site leaves the buyer unclear, name them in one more sentence: "Our buye
 
 Keep your agent set to ask before each command. You will approve four things in order: the download, a Python check, the Treg install and sign-in, and commands starting `python3 pudding.py`. Stop and ask why if it requests anything else.
 
-After 15 to 35 minutes your agent gives you a link to the review page. Press **Y**, **N** or **M** for each person, and each answer saves as you press. To get work email for your yes answers:
+After 20 to 30 minutes your agent gives you `shortlist.csv` and a link to the review page. Filter the CSV to `strong` and `look` and load it into your outreach tool, or press **Y**, **N** or **M** on the page first. Each answer saves into the CSV as you press.
+
+The first run spends its dollar on finding people. To get work email:
 
 ```text
-Get work email for the people I said yes to in my latest Pudding run. It costs about US$0.03 a person, so raise that run's cap to cover it.
+Get work email for everyone worth contacting in my latest Pudding run, or only my yes answers if I've reviewed. It costs about US$0.03 a person, so raise that run's cap to cover it.
 ```
 
-Pudding works best when your buyers write in public, in English, about their work, and name their tools. B2B software sold to founders, engineers, operators and team leads fits. Test runs found 60 people for a code review tool, 25 for an AI-native CRM and 15 for AI support agents. Buyers who rarely post produce shorter lists.
+Two more extras work the same way. Ask your agent to find owners for more of the job ads, or to add funding rounds to the companies. After each run it tells you how many are waiting and what they would cost.
+
+Pudding works best when your buyers write in public, in English, about their work, and name their tools. B2B software sold to founders, engineers, operators and team leads fits. Test runs found 72 people for a code review tool, 25 for an AI-native CRM and 15 for AI support agents.
 
 ## Cost
 
 | Item | Cost | Detail |
 | --- | --- | --- |
-| First run | about US$1 | Paid to Treg. Our first runs spent US$0.70 to US$0.95. |
+| First run | under US$1 | Paid to Treg. Pudding itself is free. Our latest run spent US$0.81. |
 | Weekly follow-up | about US$0.40 | Paid to Treg. |
 | Work email | about US$0.03 a person | On top of the run. Thirty people cost about US$1. |
-| Funding rounds | about US$0.01 a company | Optional, and on top of the run. Use it when funding tells you which accounts matter. Sixty companies cost about US$0.60. |
-| Your agent | 250,000 to 410,000 tokens on Claude | Counts against your plan like any other long session. |
+| More job-ad owners | about US$0.03 an ad | Optional, on top of the run. The first run covers the four best ads. |
+| Funding rounds | about US$0.01 a company | Optional, on top of the run. Use it when funding tells you which accounts matter. Sixty companies cost about US$0.60. |
+| Your agent | 380,000 to 570,000 tokens on Claude Sonnet | Counts against your plan like any other long session. |
 
-Treg is prepaid and advertises US$1 of starting credit for new accounts ([pricing](https://treg.to/pricing)). Your Treg balance is the outer limit on spend, so keep a few dollars in it and leave automatic top-ups off.
+Treg is prepaid and starts new teams with US$1 of free credit ([pricing](https://treg.to/pricing)), which covers a first run. Your Treg balance is the outer limit on spend, so keep a few dollars in it and leave automatic top-ups off.
 
 ## Guarantees
 
@@ -105,15 +114,15 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 ## How a run works
 
 1. **Plan.** Your agent writes searches in your buyer's words, pairing a tool they use with a phrase like "we switched" or "our renewal".
-2. **Read.** It reads several hundred posts and keeps people describing their own team's work, dropping advice and sales pitches. It copies the sentence that shows it, and Pudding checks that sentence against the post.
+2. **Read.** It reads up to a thousand authors and keeps people describing their own team's work, dropping advice and sales pitches. It copies the sentence that shows it, and Pudding checks that sentence against the post. When the reading thins out, it writes new searches from what it found and reads again.
 3. **Verify.** Pudding confirms who each person is and where they work now. When a post credits a colleague for the work, Pudding adds them beside the person who posted.
 4. **Profile the employer.** Pudding records each employer's size, industry and one-line description. Your agent drops direct competitors and labels agencies and large companies.
-5. **Read job ads** from LinkedIn, Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. When an ad hands this work to a new hire, Pudding finds whoever owns it today and marks the row as a hiring signal.
+5. **Read job ads** from LinkedIn, Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. When an ad hands this work to a new hire, Pudding finds whoever owns it today, for the four best ads, and marks the row as a hiring signal.
 6. **Rank.** Your agent grades each employer against the accounts that matter most to you, and weighs each person's audience and track record. The best accounts and the people deciding now come first, with colleagues kept together. Ranking removes nobody.
 7. **Review.** You answer yes, no or maybe. Low-fit people, existing customers and anyone Pudding couldn't identify sit in separate sections.
-8. **Enrich.** Pudding finds work email for your yes answers.
+8. **Enrich.** Pudding finds work email for your yes answers, or for everyone worth contacting.
 
-Pudding reads posts from the last 45 days and job ads from the last 90. A job ad with no published date stays in and shows `no date` on your agent's sheet. On our reference run, the typical post was 11 days old and every job ad was under four weeks old.
+Pudding reads posts from the last 30 days and job ads from the last 90. On our reference run, the typical post was 8 days old and every job ad was under three weeks old.
 
 ## Weekly runs
 
@@ -123,32 +132,34 @@ The best people to write to posted this week. Paste this each Monday:
 Run Pudding again for `<my company URL>` as a follow-up to my latest run under `~/pudding-runs`, following "Following runs" in `docs/playbook.md`. Stay under US$1. Tell me who is new and open the review page.
 ```
 
-A follow-up starts from last week's searches and your answers. It keeps the searches that found people, replaces the ones that didn't, reads everything posted since the last run (at least the past week), and leaves out everyone you've seen. In our test it found 31 new people, 4 of them strong, in 14 minutes for US$0.40. We ran that test the same day as the first run, so expect a real week to differ.
+A follow-up starts from last week's searches and your answers. It keeps the searches that found people, replaces the ones that didn't, reads everything posted since the last run (at least the past week), and leaves out everyone you've seen. A follow-up we ran the same day as a first run still found 31 new people, 4 of them strong, in 14 minutes for US$0.40.
 
 Claude Code and Codex can run this prompt on a schedule while your computer is on. A scheduled run executes Pudding's commands without asking you, so run it by hand for a few weeks first.
 
 ## Results
 
-We make a review tool for coding agents and pointed Pudding at our own market. One run found 60 people worth contacting in 19 minutes for US$0.89: 43 from LinkedIn posts, 5 from X and 12 from job ads. It graded 11 of them strong, including:
+We make a review tool for coding agents and pointed Pudding at our own market. One run found 72 people worth contacting in 23 minutes for US$0.81 of lookups: 54 from LinkedIn posts, 14 from X and 4 from job ads. Eleven sit at the accounts we most want, and 26 are graded strong, including:
 
+- A founder who hasn't found a way around the pull-request bottleneck without giving up security.
 - A founder whose reviewers can't run every change by hand, and whose agents' own checks miss regressions.
+- A chief technology officer who found that every step the team sped up piled work at the next.
+- A co-founder looking for a replacement for their AI code reviewer.
 - A chief executive whose agents write more code each week than any human team can check.
-- A co-founder whose open pull requests grow faster than the team can review them.
-- A chief technology officer whose output went up while review time didn't, and who now calls review the team's biggest constraint.
-- A founder hiring someone to orchestrate agents and review their work.
 
-A second model then saw each person's role, employer and quote, with no grades. It would message 44 of the 60, including 9 of the 11 strong. We read the first few ourselves and agreed with the grades.
+A second model then saw each person's role, employer and quote, with no grades. It would message 55 of the 72, including 23 of the 26 strong, and 19 of the first 20 on the list.
 
 | Agent | Worth contacting | Second model would message | Time | Spend |
 | --- | --- | --- | --- | --- |
-| Claude Sonnet 5.5 | 60 | 44 | 19 minutes | US$0.89 |
-| Codex (GPT-6.1) | 75 | 48 | 25 minutes | US$0.94 |
+| Claude Sonnet 5.5 | 72 | 55 | 23 minutes | US$0.81 |
+| Codex (GPT-6.1 Sol, medium reasoning) | 58 | 40 | 22 minutes | US$0.67 |
+
+Sonnet found more people on our brief and was the more precise, so it is the one we would start with. Each run writes its own searches, so a second run finds people the first one missed.
 
 ## Reference
 
 ### Output
 
-Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; their account grade and why, and their reach; and your answer. Rows come best first. The email step adds work email. Filter on `fit` and `your_answer`, and match against your CRM on `profile_url`.
+Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; their account grade and why, and their reach; and your answer. Rows come best first. The email step adds work email. Filter on `fit` and `your_answer`, and match against your CRM on `profile_url`. For an outreach tool, map `profile_url`, `first_name`, `last_name`, `company` and `work_email`, and bring `quote` and `source_url` as custom fields.
 
 ### Suppression lists
 
@@ -173,19 +184,20 @@ Your agent runs these from [the playbook](docs/playbook.md).
 | Command | Purpose |
 | --- | --- |
 | `connect` | Check the Treg sign-in. Free. |
-| `start URL` | Read the site and create the run folder. Options: `--budget-usd` (default 1.00), `--previous DIR`, `--suppress FILE`, `--window-days N` (default 45). |
+| `start URL` | Read the site and create the run folder. Options: `--budget-usd` (default 1.00), `--previous DIR`, `--suppress FILE`, `--window-days N` (default 30). |
 | `check` | Validate the plan, the grades and the account grades. |
 | `search` | Run the LinkedIn and X searches. |
 | `sheet` | Write the next batch of posts to read. `--jobs` for job ads. |
+| `searches` | Report what each search found, before searching again. |
 | `show ID…` | Print posts or ads in full. |
-| `verify` | Confirm identity and current role, and describe the employer. |
+| `verify` | Confirm identity and current role, and describe the employer. `--low` includes low-fit people. |
 | `timeline @handle`, `web "query"` | Help place an X author: their recent posts, and a web search. |
 | `spider` | Optional. Read replies under graded posts. |
-| `jobs`, `contacts` | Find job ads, then the person who owns the work. `jobs --lookback-days N` (default 90). |
+| `jobs`, `contacts` | Find job ads, then the person who owns the work. `jobs --lookback-days N` (default 90), `contacts --limit N` (default 4). |
 | `accounts` | Grade accounts and reach, which set the shortlist's order. `--funding` adds funding rounds. |
 | `shortlist` | Write `shortlist.md` and `shortlist.csv`. |
 | `review` | Start the review page and print its address. |
-| `enrich` | Find work email for your yes answers. |
+| `enrich` | Find work email for your yes answers. `--all` covers everyone worth contacting. |
 | `budget USD` | Raise this run's cap. |
 | `status` | Show the counts and spend. |
 

@@ -33,7 +33,7 @@ Every command takes the project folder first:
 python3 pudding.py --project ~/pudding-runs/acme/2026-11-10 <command>
 ```
 
-Run `status` at any point to see the funnel and the spend. Paid steps are safe to rerun: a completed lookup is never charged twice. A paid step makes its lookups four at a time and can still take two or three minutes; let it finish, and do not pipe it through `tail` or `head`, which hides its progress.
+Run `status` at any point to see the funnel and the spend. Paid steps are safe to rerun: a completed lookup is never charged twice. A paid step makes its lookups four at a time and can still take two or three minutes; let it finish, and do not pipe it through `tail` or `head`, which hides its progress. If your shell moves a long step to the background, wait for it to end before you run the next one.
 
 ## 1. Read the site and write the plan
 
@@ -41,7 +41,7 @@ Run `status` at any point to see the funnel and the spend. Paid steps are safe t
 python3 pudding.py --project DIR start https://example.com --budget-usd 1.00
 ```
 
-The amount after `--budget-usd` is a hard cap, not a target: use the figure the user gave you. Each paid step says how many lookups the cap refused. Only the user can decide to spend more: when they do, `budget 2.00` raises this run's cap, and rerunning the step picks up what was refused. Never raise it yourself.
+The amount after `--budget-usd` is a hard cap: use the figure the user gave you. It is there to be used. A run that ends with a third of it unspent has left people unverified or unidentified. Each paid step says how many lookups the cap refused. Only the user can decide to spend more: when they do, `budget 2.00` raises this run's cap, and rerunning the step picks up what was refused. Never raise it yourself.
 
 If there was an earlier run, add `--previous OLD_DIR`. See "Following runs" below.
 
@@ -125,7 +125,7 @@ python3 pudding.py --project ~/pudding-runs/acme/2026-11-17 start https://exampl
 - keeps the same suppression list, unless you pass a new one;
 - keeps last time's company grades in `accounts.json`, so you grade only new companies.
 
-Read `feedback.md` first. Keep the searches that found people. Replace the ones that found none with new angles, so about a third of the plan is new each run. Lean towards people like the reviewer's yes answers. Then run the steps as usual. There is less to read: stop when the stop rule says, and at 240 authors in any case.
+Read `feedback.md` first. Keep the searches that found people. Replace the ones that found none with new angles, so about a third of the plan is new each run. Lean towards people like the reviewer's yes answers. Then run the steps as usual. A follow-up starts from searches that already worked, so it needs no further search rounds, and there is less to read: stop when the stop rule in "Search and read" says, and at 480 authors in any case.
 
 Name each run folder by date inside one folder for the company, and use the latest one as `--previous`. Report who is new this run, not the running total.
 
@@ -140,10 +140,13 @@ python3 pudding.py --project DIR sheet --limit 60
 
 Read `sheet.md` and grade every row in `grades.json`. Save your grades before you run `sheet` again: it writes the next batch over the last one. Teams describing their own work come first and job ads, job seekers and launch posts sink, but the order is a guide, not a ranking.
 
-- Read at least the first 150 authors. After that, stop when two batches in a row give you fewer than three prospects between them, counting every `prospect` you grade, whatever its fit. Stop at 480 authors in any case: the rest of the run needs the time and the spend.
+- Read in batches of 60 and count the prospects each batch gives you, `strong` and `look` only. A batch that gives fewer than four is dry. One dry batch after good ones is often chance, so a round ends at two dry batches in a row.
+- Read at least the first 150 authors, then keep going until the round ends. That is the moment to search again, as "Search again" below describes: new searches written from what you found pay better than the tail of the old ones.
+- Read each new round the same way, until it ends too.
+- Stop for good, whichever round you are in, at about 120 prospects for each US$1 of the cap or at 1,000 authors in all. Verifying a prospect costs about half a cent, and the searches and account grades need the rest. Say in your report which rule stopped you.
 - A row marked `Possible seller` has a headline that pitches this category or names a company you excluded. It reads later for that reason. A pitch is `no`. A post about their own team's pain is graded like anyone else's: someone who sells nearby often has the problem themselves.
 - A short post is shown whole. A row ending in `…` is cut to its most relevant stretch: `show P0012 P0040` prints posts in full with their parents, and `sheet --chars 1200` shows more of each long post. Copy a quote from text you can see in full.
-- The sheet shows one post per author and reads identical reshares once.
+- The sheet shows one post per author and reads identical reshares once. If someone you already graded turns up again on the other network, grade them the same way: the shortlist shows a person once.
 
 ```json
 {
@@ -156,14 +159,41 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 
 | Verdict | Use it when |
 | --- | --- |
-| `prospect` | The author describes their own or their team's real work on this problem. Set `fit`. |
+| `prospect` | Yes to all three questions below. Set `fit`. |
 | `customer` | They already use the product. |
 | `churned` | They left the product. |
-| `built_own` | They replaced the category with something they built. |
-| `borderline` | Firsthand but off to one side: a client's problem rather than their own, a hobby build, a tangent. |
+| `built_own` | They built their own tool for this job and say it does the job. If they built something and it still hurts, they are a `prospect`. |
+| `borderline` | Their own work, but no to question 2 or 3. |
 | `no` | Everything else. |
 
-**Fit says how strong the evidence is, and with the account grade it decides who the reviewer sees first.** `strong` is someone the user would want to talk to this week: the right buyer, describing this problem now, and not yet committed to another answer. Someone who finished switching last month is `look` at best. `look` is worth a look. `low` goes in its own section: use it for someone who has just committed to a competitor, runs a vertical tool, or sits outside the buyer.
+**Three questions decide the verdict.** Answer them from the post and the headline on its row.
+
+1. **Is it their own work?** They write as "we", "I" or "our team" about what they do now. Advice to the reader, comment on the news, a pitch and a story about someone else are `no`.
+2. **Is it about this work?** The post is about the job the product does, the thing in `qualifies`, and not only the tools or the topic around it. A team that says it rolled out a tool and productivity is up has told you about the tool, not about this work.
+3. **Is there a team to sell to?** A company they work at or run, or a product with users. One client's project, a hobby build, a course exercise and a job hunt are not. An agency or a fractional leader describing how they deliver is their own work; describing one client's project is not.
+
+Three yeses make a `prospect`. Their own work with a no to question 2 or 3 is `borderline`.
+
+**Two more questions decide the fit.** With the account grade, fit decides who the reviewer sees first.
+
+- **Do they say it hurts?** They name a cost: time lost, a backlog, something that broke or slipped through, a worry, or a search for something better. Describing how they handle it, however carefully, is not saying it hurts.
+- **Could they buy?** They hold a role in `buyer`, or lead the team, at a company the product is for.
+
+Both: `strong`. One: `look`. Neither: `low`. Someone who has just committed to a competitor is `low` whatever the answers, and someone who finished switching last month is `look` at best. `low` goes in its own section of the shortlist.
+
+Worked examples, for a seller of a CRM:
+
+| Post | Grade | Why |
+| --- | --- | --- |
+| "We moved off HubSpot in March. Reps were entering every deal twice and the renewal quote doubled." Head of Revenue Operations | `prospect`, `strong` | Their own work, about the CRM, it hurts, and they own it. |
+| "Every Monday our team runs pipeline review from three HubSpot views. Here is how we set them up." Head of Sales | `prospect`, `look` | Their own work, about the CRM, and they could buy. Nothing hurts. |
+| "Spent my weekend deduplicating our CRM again." Sales development rep | `prospect`, `look` | It hurts. They can't buy. |
+| "We log every call in HubSpot." Account executive | `prospect`, `low` | Their own work on the CRM. Nothing hurts and they can't buy. |
+| "We built our own deal tracker in Notion and it does everything we need." Founder | `built_own` | Their own answer, and it works for them. |
+| "We built our own deal tracker and still lose a day a week keeping it in step." Founder | `prospect`, `strong` | They built something, it still hurts, and they could buy. |
+| "We gave the whole company an AI assistant and productivity is up." Chief executive | `borderline` | Their own work, but not about the CRM. |
+| "Migrated a client from Pipedrive to Salesforce last month." Consultant | `borderline` | One client's project. |
+| "Five signs your CRM is holding you back." | `no` | Advice to the reader. |
 
 **Mark who is deciding now.** Add `"buying_now": true` when their own words say a purchase decision is open: they are choosing or comparing tools, asking for recommendations, a renewal is coming, or they say they would switch. It moves them up the shortlist. Building something in-house, a complaint, or a plan with no tool to choose is not buying now. Expect a handful in a run: if a quarter of your prospects are buying now, you are reading it too loosely.
 
@@ -171,9 +201,24 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 
 **Only three things are hard rules.** The quote is copied exactly from the post. The author is speaking about their own work. They do not sell a competing product or recruit for this category. Everything else is a label, so the reviewer can decide: `agency`, `solo`, `employer not named in post`, `just chose a competitor`, `role outside the buyer list`, `junior`.
 
-A short reply can be a prospect if it describes the author's own work. Agreement, advice and a job title are not evidence.
+A short reply can be a prospect if it passes the three questions. Agreement, advice and a job title are not evidence.
 
 `prospect`, `customer`, `churned` and `built_own` need a `quote` and a `why`. `borderline` and `no` can be the plain string, as `P0013` is above. Every row needs a grade, or it comes back on the next sheet.
+
+### Search again
+
+```sh
+python3 pudding.py --project DIR searches
+```
+
+A first plan finds one slice of the people who are out there, and two plans for the same company share almost no searches. So when a round of reading ends, search again from what it taught you. `searches` writes `searches.md`: for every search, the posts it captured, how many you read and how many prospects it gave.
+
+- Keep every search that gave a prospect. Replace every search that gave none. The limits on the plan still apply.
+- Write the new searches from evidence, not from guesses. Use the phrases your prospects used, which are the quotes in `grades.json`, paired with a tool or a first-person phrase. Write siblings of the searches that worked: the same phrase with another tool your buyers use, or the same tool with another phrase that worked. Add an angle the first plan never tried.
+- A new search must differ from every search you kept by its tool or its phrase, or it will only find posts you already have. Don't bring back a search you replaced.
+- Run `check`, then `search`. Only the new searches are charged. Then run `sheet`: the posts that only the new searches found come first, marked `new search`.
+
+Do this each time a round ends, up to three times in a run. Stop sooner if a new round's first batch is dry: the searches have run out of new people. Skip it if the run has reached the prospect or author limit.
 
 ## 3. Verify
 
@@ -181,7 +226,7 @@ A short reply can be a prospect if it describes the author's own work. Agreement
 python3 pudding.py --project DIR verify
 ```
 
-`verify` confirms each prospect's LinkedIn identity and current role. `verify --retry-held` tries held people again.
+`verify` confirms each `strong` and `look` prospect's LinkedIn identity and current role, 80 people at a time: run it again while it says prospects are still unchecked. Low-fit prospects are listed on the shortlist unchecked, so the lookups go to people worth contacting; `verify --low` checks them too. `verify --retry-held` tries held people again.
 
 For an X author it follows the trail a person would: a LinkedIn link on the X profile, a link on the website the profile points to, then web searches on their name, handle and the company in their bio. It accepts a LinkedIn profile only when the profile shares two checkable things with the X account, one of them about the person. It holds the rest for you.
 
@@ -229,7 +274,7 @@ python3 pudding.py --project DIR web '"Ada Example" Fig Labs linkedin'
           "linkedin": "https://www.linkedin.com/in/ada-example"}
 ```
 
-`verify` checks your answer the way it checks its own. A tie to the person is the same name, a name that fits the handle, their full name on the linked website, the same handle, or a LinkedIn profile that links the X account. A name counts once however many places it appears. A second tie is the company from the X bio on their LinkedIn profile, or their employer on the X profile or its website.
+`verify` checks your answer the way it checks its own. A tie to the person is the same name, a name that fits the handle, their full name on the linked website, the same handle, or a LinkedIn profile that links the X account. A name counts once however many places it appears, and a handle that is only their name is the name again. A second tie is the company from the X bio on their LinkedIn profile, or their employer on the X profile or its website.
 
 - Both ties: verified.
 - Only a tie to the person: kept, with a label saying you named them. Name someone on a name alone only when the name is uncommon and their LinkedIn profile fits what they post about. If the profile shows another field or no employer, leave them held.
@@ -255,7 +300,7 @@ python3 pudding.py --project DIR jobs
 python3 pudding.py --project DIR sheet --jobs
 ```
 
-`jobs` searches LinkedIn's job listings and the employer job boards for each query, keeps one ad per employer, and writes the 20 that say most about your topics to `jobs-sheet.md`. Grade those, then run `sheet --jobs` for the next 20. Read every ad: each is a company telling you what its team is doing, and there are only about a hundred. Grade them in `job-grades.json`.
+`jobs` searches LinkedIn's job listings and the employer job boards for each query, keeps one ad per employer, and writes the 20 that say most about your topics to `jobs-sheet.md`. Grade those in `job-grades.json`, then run `sheet --jobs` for the next 20. Each ad is a company telling you what its team is doing. Read on while a sheet gives you a `strong` ad, and stop at the first sheet that gives none: job ads pay when the buyer's problem turns into a hire, and for many products it doesn't.
 
 An ad from LinkedIn shows the employer's size, industry and description, and the hiring team when the ad names one. Use them before you grade: a staffing firm hiring for a client is `no`. A company far from the buyer's size keeps its fit with a label, as in verify.
 
@@ -281,7 +326,7 @@ An ad from LinkedIn shows the employer's size, industry and description, and the
 python3 pudding.py --project DIR contacts
 ```
 
-`contacts` finds who owns the work today for the twelve best `strong` and `look` ads (`--limit` raises that; the lookups are the dear part of a run), in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. If the search finds only colleagues or someone junior, it follows a colleague's profile to the employer's LinkedIn page and asks for the title holders there. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open, unless the ad itself has the hire choose a tool.
+`contacts` finds who owns the work today for the four best ads, `strong` first, and says how many it left. Finding an owner costs about three cents an ad, the dearest lookups in a run, so the first run stays small: `contacts --limit N` covers more when the user asks. It looks in this order: someone you already verified at that employer, the hiring team named on the ad, LinkedIn's own list of people at the employer under the titles you named, then a web search. If the search finds only colleagues or someone junior, it follows a colleague's profile to the employer's LinkedIn page and asks for the title holders there. It checks each candidate's current role and stops at the most senior fit. It says whether the person holds a title you named, works in the same function, or is a company leader. Regrade from the employer line here too: a staffing or payroll firm posting for a client is `no`. A hiring signal says the work is live. It does not say a purchase is open, unless the ad itself has the hire choose a tool.
 
 ## 5. Put the best accounts first
 
@@ -289,7 +334,9 @@ python3 pudding.py --project DIR contacts
 python3 pudding.py --project DIR accounts
 ```
 
-Everyone verified stays on the list. This step decides who comes first. `accounts` looks up each employer's LinkedIn record (its type, size, followers and founding year) and writes `accounts-sheet.md`: every company, then every person with their audience, how long they have held the role and where they worked before. Add `--funding` when `ideal_account` turns on funding, as it does for a seller to funded startups. It costs about a cent per company, which a run near its cap cannot cover: run `status` first, and if the cap is short, tell the user what it would cost and let them decide. Leave it off for a seller to small businesses, where funding says little.
+Everyone verified stays on the list. This step decides who comes first. `accounts` looks up each employer's LinkedIn record (its type, size, followers and founding year) and writes `accounts-sheet.md`: every company, then every person with their audience, how long they have held the role and where they worked before.
+
+Funding rounds are an extra, not part of a first run: they add detail about companies already found, at about a cent each, and find nobody new. Run `accounts --funding` only when the user asks for funding data. Until then, grade from what the sheet shows and what you know of the company.
 
 Grade both into `accounts.json`. On a follow-up run the file already holds last run's company grades: add to it, and regrade a company only if `ideal_account` or the facts have changed.
 
@@ -319,22 +366,24 @@ Companies and people are keyed by the IDs the sheet shows: the name in a company
 - `account` on a person: the account grade when they have no company page, when LinkedIn matched the wrong company, or when the company grade is wrong for them. A junior employee at a large company can't bring the account in alone: give them the grade of the deal they could start, often B. Start their `why` with the account reason: the shortlist shows it beside the grade.
 - `warning`: a note for the reviewer on their row, such as a job ad matched to a different company with the same name, or a contact from `contacts` who doesn't own the work, such as a CEO from another function.
 
-Grade every company and every person. An ungraded company counts as B and an ungraded person as C reach, and someone with no employer at all as a C account, so a partly graded file still works. Run `check` after writing it.
+Grade every company, and every person the sheet shows in full: they have an audience, a new role, a connector's title or no company page. The people it lists under "Nothing to weigh" count as C reach unless you know better. An ungraded company counts as B, and someone with no employer at all as a C account. Run `check` after writing it.
 
 **How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted in the week before the run, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is worth contacting too. Colleagues sit together under their company's best row, and an entry point counts as worth a look. Low fit keeps its own section, ordered the same way.
 
 ## 6. Shortlist and review
+
+Run `status` first. If the cap has room, spend it on people you have already found before you look for anything else: run `verify` again for anyone the cap stopped, then place the held `strong` and `look` X authors as "Held X authors" describes, strongest first. Each one placed is a person on the list for about a cent.
 
 ```sh
 python3 pudding.py --project DIR shortlist
 python3 pudding.py --project DIR review
 ```
 
-`shortlist.md` leads with the people worth contacting, best accounts and people deciding now first. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person in the same order, with `fit`, `account`, `account_why`, `reach` and `priority` columns and their employer's size and industry.
+`shortlist.md` leads with the people worth contacting, best accounts and people deciding now first, and its heading says how many sit at A, B and C accounts. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person in the same order, with `fit`, `account`, `account_why`, `reach` and `priority` columns and their employer's size and industry.
 
 `review` serves a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. It runs until stopped, so start it in the background, tell the user the address it prints, and leave it running.
 
-Report the number worth contacting, not the total verified, and give entry points as a separate number. When two people at one small company are on the list, suggest the user writes to one at a time, starting with whoever is closest to the problem. Give the funnel and the spend, and say plainly what was not covered.
+Report the number worth contacting and how many of them are at A and B accounts, not the total verified, and give entry points as a separate number. When two people at one small company are on the list, suggest the user writes to one at a time, starting with whoever is closest to the problem. Give the funnel, the spend and the path to `shortlist.csv`, and say plainly what was not covered. End with what the user can add and what each costs: owners for the job ads `contacts` left (about three cents an ad), funding rounds (about a cent a company), work email for their yes answers or for everyone worth contacting (about three cents a person), and low-fit prospects left unchecked. Do none of these unasked.
 
 ## 7. Work email
 
@@ -343,7 +392,7 @@ python3 pudding.py --project DIR enrich
 python3 pudding.py --project DIR shortlist
 ```
 
-`enrich` looks up work email for the people the user said yes to, so run it after they have reviewed. It accepts one address at the employer's own domain and confirms the mailbox with a second provider, so a company whose mail server accepts every address gets none. It costs about US$0.03 a person. If the run's cap is spent, it says so on each row: ask the user whether to raise it (`budget`), then run `enrich` again. `enrich --all` covers everyone worth contacting; use it only if the user asks.
+`enrich` looks up work email for the people the user said yes to. When they ask for everyone worth contacting instead, run `enrich --all`. It covers 25 people a run, best first, and says how many are waiting: pass `--limit` to cover them. It accepts one address at the employer's own domain and confirms the mailbox with a second provider, so a company whose mail server accepts every address gets none. It costs about US$0.03 a person. If the run's cap is spent, it says so on each row: ask the user whether to raise it (`budget`), then run `enrich` again. Use `--all` only if the user asks.
 
 ## Limits
 

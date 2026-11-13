@@ -695,7 +695,7 @@ class AgentRunTest(unittest.TestCase):
         grade = {"verdict": "prospect", "fit": "strong", "why": "Own team.", "quote": "We switched off Tool1 in March."}
         self.write("grades.json", {"P0001": {**grade, "follow_employer": True}, "P0002": grade})
         person = lambda company: {"verified": {"name": "N", "role": "CEO", "company": company}, "profile_url": "u"}
-        self.write("people.json", {"P0001": person("Fig Labs"), "P0002": person("AI Answers")})
+        self.write("people.json", {"P0001": person("Fig Labs"), "P0002": person("Larchfield Answers")})
         searched = []
 
         def call(endpoint, params, transform):

@@ -189,6 +189,7 @@ Your agent runs these from [the playbook](docs/playbook.md).
 | `verify` | Confirm identity and current role, and describe the employer. `--low` includes low-fit people. |
 | `timeline @handle`, `web "query"` | Help place an X author: their recent posts, and a web search. |
 | `spider` | Optional. Read replies under graded posts. |
+| `post LINK…` | Optional. Read a post you were sent: its commenters, and the reactors who wrote about the topic themselves. Other reactors go to `engaged.csv`, never the shortlist. |
 | `jobs`, `contacts` | Find job ads, then the person who owns the work. `jobs --lookback-days N` (default 90), `contacts --limit N` (default 4). |
 | `accounts` | Grade accounts and reach, which set the shortlist's order. `--funding` adds funding rounds. |
 | `shortlist` | Write `shortlist.md` and `shortlist.csv`. |

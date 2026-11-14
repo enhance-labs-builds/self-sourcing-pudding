@@ -748,6 +748,91 @@ class AgentRunTest(unittest.TestCase):
             pudding.lock_down(self.project)
             self.assertEqual(oct(outside.stat().st_mode & 0o777), "0o644")
 
+    def test_a_shared_link_loses_its_tracking_and_must_be_a_post(self):
+        shared = pudding.shared_post_url
+        self.assertEqual(shared("https://www.linkedin.com/posts/moe_figma-mcp-share-7527067885928833024-BeZ6/"
+                                "?utm_source=social_share_send&utm_medium=android_app&rcm=ACoAABr3b04"),
+                         ("linkedin", "https://www.linkedin.com/posts/moe_figma-mcp-share-7527067885928833024-BeZ6"))
+        self.assertEqual(shared(" https://linkedin.com/feed/update/urn:li:activity:7527067885928833024/ "),
+                         ("linkedin", "https://www.linkedin.com/feed/update/urn:li:activity:7527067885928833024"))
+        self.assertEqual(shared("https://twitter.com/ada/status/1888888888888888888?s=20&t=abc"),
+                         ("x", "https://x.com/ada/status/1888888888888888888"))
+        for link in ("https://www.linkedin.com/in/ada", "https://example.com/posts/x-activity-7527067885928833024",
+                     "http://www.linkedin.com/posts/moe_x-activity-7527067885928833024", "not a link"):
+            with self.assertRaises(ValueError):
+                shared(link)
+
+    def test_a_shared_post_brings_its_commenters_and_the_reactors_who_wrote_about_it(self):
+        link = "https://www.linkedin.com/posts/moe_tools-activity-7527067885928833024-BeZ6"
+        person = lambda slug, name, headline: {"name": name, "position": headline,
+                                               "linkedinUrl": f"https://www.linkedin.com/in/{slug}"}
+        own_post = lambda slug, text, n: {"linkedinUrl": f"https://www.linkedin.com/posts/{slug}_x-activity-70000000000000000{n:02d}-ab",
+                                          "content": text, "author": {"name": slug.title(), "info": "x",
+                                                                      "linkedinUrl": f"https://www.linkedin.com/in/{slug}"},
+                                          "postedAt": {"date": "2026-11-09T00:00:00Z"}}
+        answers = {
+            t.LINKEDIN_POST: {"element": {**own_post("moe", "Tool1 is underrated. We switched our whole team to it.", 1),
+                                          "linkedinUrl": link + "?rcm=abc"}},
+            t.LINKEDIN_COMMENTS: {"pagination": {"totalPages": 1}, "elements": [
+                {"linkedinUrl": link + "#c1", "commentary": "Thanks all!", "actor": person("moe", "Moe", "Designer")},
+                {"linkedinUrl": link + "#c2", "commentary": "We switched to Tool1 in March and our pipeline is cleaner.",
+                 "createdAt": "2026-11-10T01:00:00Z", "actor": person("cara", "Cara Cole", "CTO at Fig")}]},
+            t.LINKEDIN_REACTIONS: {"pagination": {"totalPages": 1}, "elements": [
+                {"reactionType": "LIKE", "actor": person(slug, name, headline)} for slug, name, headline in (
+                    ("moe", "Moe", "Designer"), ("cara", "Cara Cole", "CTO at Fig"), ("dan", "Dan Day", "CTO at Larch"),
+                    ("eve", "Eve Eden", "Talent partner and recruiter"), ("fay", "Fay Fox", "Head of Revenue Operations at Plum"),
+                    ("gus", "Gus Gray", "Founder, CRM consultancy"), ("ida", "Ida Ivy", "VP Sales"),
+                    ("ACoAAB12x", "Jo Jones", "=HYPERLINK(1) engineering lead"))]
+                + [{"reactionType": "LIKE", "actor": {"name": "Acme", "linkedinUrl": "https://www.linkedin.com/company/acme"}}]},
+        }
+        old = lambda post: {**post, "postedAt": {"date": "2026-08-01T00:00:00Z"}}
+        own = {"https://www.linkedin.com/in/fay": [own_post("fay", "We switched off Tool3 last month and our team saved hours.", 2),
+                                                    own_post("fay", "Happy birthday to my dog.", 3),
+                                                    own_post("fay", "Tool4 has shipped a new product.", 5),             # no voice of their own
+                                                    old(own_post("fay", "We switched off Tool6 and our team loved it.", 6)),  # too old
+                                                    own_post("fay", "Our product team found we ship faster now.", 7)],      # only loose words
+               "https://www.linkedin.com/in/dan": [own_post("dan", "Great conference in Lisbon.", 4)],
+               "https://www.linkedin.com/in/ACoAAB12x": []}
+        sent = []
+
+        def call(endpoint, params, transform):
+            sent.append((endpoint, params))
+            raw = own[params["profile"]] if endpoint == t.LINKEDIN_USER_POSTS else answers[endpoint]
+            return transform({"elements": raw} if endpoint == t.LINKEDIN_USER_POSTS else raw)
+
+        self.write("previous.json", {"https://www.linkedin.com/in/ida": {"name": "Ida Ivy"}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            pudding.read_post(self.project, call, link + "/?utm_source=x&rcm=ACoAABr3b04", likers=2)
+        self.assertNotIn("rcm", json.dumps(sent))       # the tracking that names who shared it never leaves this machine
+        posts = json.loads((self.project / "posts.json").read_text())
+        by = {post["author"]: post for post in posts.values()}
+        self.assertEqual(by["Moe"]["found_by"], [f"shared {link}"])
+        self.assertEqual((by["Cara Cole"]["parent"], by["Cara Cole"]["kind"]), ("P0001", "comment"))
+        self.assertEqual(sum(post["author"] == "Moe" for post in posts.values()), 1)   # the author's own comment is not a lead
+        # Two reactors checked, best placed first: Fay (owner title) then Dan (CTO). Fay wrote about it; Dan didn't.
+        checked = [params["profile"] for endpoint, params in sent if endpoint == t.LINKEDIN_USER_POSTS]
+        self.assertEqual(checked, ["https://www.linkedin.com/in/fay", "https://www.linkedin.com/in/dan"])
+        self.assertEqual([post["text"][:20] for post in posts.values() if post["found_by"] == ["liked P0001"]],
+                         ["We switched off Tool"])
+        engaged = (self.project / "engaged.md").read_text()
+        for name in ("Dan Day", "Eve Eden", "Gus Gray", "Jo Jones"):
+            self.assertIn(name, engaged)
+        for name in ("Fay Fox", "Moe", "Cara Cole", "Ida Ivy", "Acme"):
+            self.assertNotIn(f"| {name} |", engaged)
+        self.assertIn("'=HYPERLINK", (self.project / "engaged.csv").read_text())   # a formula stays text in a spreadsheet
+        self.assertIn("1 wrote about the topic themselves", out.getvalue())
+        # Again: nothing doubles, and the next reactor in line is checked, by the link as LinkedIn gave it.
+        sent.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            pudding.read_post(self.project, call, link, likers=2)
+        self.assertEqual(len(json.loads((self.project / "posts.json").read_text())), len(posts))
+        self.assertEqual([params["profile"] for endpoint, params in sent if endpoint == t.LINKEDIN_USER_POSTS],
+                         ["https://www.linkedin.com/in/ACoAAB12x"])
+        shared = json.loads((self.project / "shared.json").read_text())
+        self.assertFalse(shared["engaged"]["https://www.linkedin.com/in/eve"]["checked"])   # a recruiter is never looked up
+        self.assertFalse(shared["engaged"]["https://www.linkedin.com/in/gus"]["checked"])   # nor a seller
+
     def test_spider_retries_what_the_cap_refused(self):
         posts = {}
         pudding.add_posts(posts, [POST], "q")

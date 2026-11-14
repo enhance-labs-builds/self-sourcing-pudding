@@ -182,7 +182,8 @@ def ledger(project, funding=False):
     token, org = credentials()
     client = t.Treg(token, org)
     wanted = (t.LINKEDIN, t.X, t.PROFILE, t.LINKEDIN_COMMENTS, t.X_REPLIES, t.X_PROFILE, t.BUYER_WEB, t.SEMANTIC_PEOPLE,
-              t.JOB_SEARCH, t.JOB, t.PEOPLE, *t.EMAIL_ENDPOINTS, *([t.FUNDING] if funding else []))
+              t.JOB_SEARCH, t.JOB, t.PEOPLE, t.LINKEDIN_POST, t.LINKEDIN_REACTIONS, t.LINKEDIN_USER_POSTS,
+              *t.EMAIL_ENDPOINTS, *([t.FUNDING] if funding else []))
     quotes = client.preflight({t.LINKEDIN, t.X, t.PROFILE}, include_x_quotes=True)
     for endpoint in wanted[3:]:
         try:
@@ -661,7 +662,7 @@ def sheet(project, limit, chars=800):
     graded_authors = {author_key(posts[key]) for key in grades if key in posts}
     same_text = lambda post: compact(post["text"])[:400]
     rejected = {same_text(posts[key]) for key, grade in grades.items() if key in posts and grade.get("verdict") == "no"}
-    followup = lambda post: bool(post.get("parent")) or post.get("found_by", [""])[0].startswith("employer ")
+    followup = lambda post: bool(post.get("parent")) or post.get("found_by", [""])[0].startswith(("employer ", "shared ", "liked "))
     seen_before = set(read(project / "previous.json", {})) | set(read(project / "suppress.json", {}).get("profiles", []))
     read_before = set(read(project / "read-before.json", []))
     best, copies = {}, {}
@@ -838,6 +839,159 @@ def spider(project, call, threads, x_threads, quote_pages, employers):
     t.atomic_json(project / "posts.json", posts)
     t.atomic_json(project / "spider.json", done)
     print("Run sheet again to read what the follow-ups found.")
+
+
+# A post someone shared
+
+SHARED_ID = re.compile(r"(?:activity|ugcPost|share)[-:](\d{17,22})(?!\d)")
+ROLE = re.compile(r"\b(?:founder|co-?founder|cto|ceo|chief|head of|vp|vice president|director|lead|principal|staff|"
+                  r"engineering manager|manager)\b", re.I)
+MAKER = re.compile(r"\b(?:engineer|developer|architect|designer|product)\b", re.I)
+
+
+def shared_post_url(text):
+    """(channel, link) for a LinkedIn or X post as someone pasted it. Everything after the path goes: a LinkedIn
+    share link carries tracking that can name the person who shared it, and nothing in it is needed."""
+    parts = urlsplit(text.strip())
+    host = (parts.hostname or "").removeprefix("www.").removeprefix("mobile.")
+    if parts.scheme in {"http", "https"} and host in {"x.com", "twitter.com"}:
+        if match := re.fullmatch(r"/(\w{1,15})/status/(\d{5,25})/?", parts.path):
+            return "x", f"https://x.com/{match[1]}/status/{match[2]}"
+    if (parts.scheme == "https" and host == "linkedin.com" and parts.path.startswith(("/posts/", "/feed/update/"))
+            and SHARED_ID.search(parts.path)):
+        return "linkedin", "https://www.linkedin.com" + parts.path.rstrip("/")
+    raise ValueError(f"{text.strip()[:120]} is not a LinkedIn or X post link. Paste the link to the post itself.")
+
+
+def buyer_signal(headline, plan):
+    """How much a reactor's headline alone suggests the buyer. Zero means not worth a lookup: they said nothing,
+    so their headline is all there is to go on until their own posts are read."""
+    if not headline or seller(plan, headline) or JOB_HUNT.search(headline) or (
+            BYSTANDER.search(headline) and not BYSTANDER.search(plan["buyer"])):
+        return 0
+    low = headline.casefold()
+    terms = [term for term in topic_terms(plan) + [plan.get("employer_topic", "")] if len(term) > 3]
+    return (3 * any(title.casefold() in low for title in plan["owner_titles"]) + 2 * bool(ROLE.search(headline))
+            + bool(MAKER.search(headline)) + any(term.casefold() in low for term in terms))
+
+
+def on_topic(text, plan):
+    """The plan's phrases a post uses. Only phrases and named tools count: single words such as "product" or "ship"
+    turn up in any post, and a phrase about the writer ("my team") says nothing about the topic."""
+    low = text.casefold()
+    terms = [term for term in topic_terms(plan) + [plan.get("employer_topic", "")]
+             if len(term) > 3 and (" " in term.strip() or term[:1].isupper()) and not re.match(r"(?:my|your|the|a)\b", term, re.I)]
+    return [term for term in terms if term.casefold() in low]
+
+
+def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=30, per_liker=2, liker_days=30):
+    """Read a post someone shared: the post, the comments under it, who reacted, and the reactors' own recent posts.
+    Commenters and reactors with a post of their own on the topic go on the reading sheet to be graded like anyone
+    else. Reactors with nothing of their own are listed in engaged.md, apart: they have shown interest, not evidence."""
+    channel, link = shared_post_url(link)
+    plan, posts = load_plan(project), load_posts(project)
+    shared = read(project / "shared.json", {"posts": {}, "engaged": {}})
+    skip = set(read(project / "previous.json", {})) | set(read(project / "suppress.json", {}).get("profiles", []))
+    found_by = f"shared {link}"
+    before = refused(call)
+    seed = None
+    if channel == "linkedin":
+        rows = call(t.LINKEDIN_POST, {"url": link}, t.linkedin_post) or []
+        add_posts(posts, rows, found_by)
+        seed = next((key for key, post in posts.items() if found_by in post.get("found_by", [])
+                     and not post.get("parent")), None)
+    author = author_key(posts[seed]) if seed else None
+    comments = 0
+    if channel == "linkedin":
+        for page in range(1, comment_pages + 1):
+            got = call(t.LINKEDIN_COMMENTS, {"post": link, "sortBy": "date", "page": page},
+                       lambda data: (t.linkedin_comments(data), t.pages_of(data)))
+            if not got:
+                break
+            rows, pages = got
+            rows = [row for row in rows if author_key(row) != author]
+            comments += add_posts(posts, rows, f"comment on {seed or link}", parent=seed)
+            if page >= pages:
+                break
+    else:
+        rows = call(t.X_REPLIES, {"url": link, "limit": 20}, lambda data: t.x_posts(data, replies=True)) or []
+        comments += add_posts(posts, rows, f"reply to {link}")
+    commenters = {author_key(post) for post in posts.values() if post.get("parent") == seed and seed}
+    engaged = shared["engaged"]
+    reactions = 0
+    if channel == "linkedin":
+        for page in range(1, reaction_pages + 1):
+            got = call(t.LINKEDIN_REACTIONS, {"post": link, "page": page},
+                       lambda data: (t.linkedin_reactions(data), t.pages_of(data)))
+            if not got:
+                break
+            rows, pages = got
+            for row in rows:
+                reactions += 1
+                if row["profile"] in (author, *commenters) or row["profile"] in skip:
+                    continue
+                entry = engaged.setdefault(row["profile"], {**row, "posts": [], "checked": False, "own": []})
+                if link not in entry["posts"]:
+                    entry["posts"].append(link)
+            if page >= pages:
+                break
+    # Reactors said nothing, so read their own recent posts, best-placed first, up to the limit. The provider's own
+    # date limit isn't reliable, so the age is checked here.
+    created = date.fromisoformat(read(project / "project.json")["created"])
+    oldest = (created - timedelta(days=liker_days)).isoformat()
+    seen_post = {t.social_source_key(posts[seed])} if seed else set()
+    queue = sorted((entry for entry in engaged.values() if not entry["checked"] and buyer_signal(entry["headline"], plan)),
+                   key=lambda entry: -buyer_signal(entry["headline"], plan))[:likers]
+    for entry, rows in zip(queue, together(call, lambda entry: call(
+            t.LINKEDIN_USER_POSTS, {"profile": entry["lookup"], "postedLimit": "month"}, t.linkedin_posts), queue)):
+        if rows is None:
+            continue  # Refused by the cap: tried again next time.
+        entry["checked"] = True
+        topical = [row for row in rows if (row.get("published_on") or "") >= oldest and on_topic(row["text"], plan)
+                   and (TEAM.search(row["text"]) or OWN.search(row["text"])) and t.social_source_key(row) not in seen_post]
+        topical.sort(key=lambda row: -score(row, topic_terms(plan), plan["buyer"]))
+        for row in topical[:per_liker]:
+            add_posts(posts, [row], f"liked {seed or link}")
+            key = next(key for key, post in posts.items() if t.social_source_key(post) == t.social_source_key(row))
+            if key not in entry["own"]:
+                entry["own"].append(key)
+    shared["posts"][link] = {"seed": seed, "channel": channel, "read": date.today().isoformat()}
+    t.atomic_json(project / "posts.json", posts)
+    t.atomic_json(project / "shared.json", shared)
+    engaged_sheet(project, plan, shared)
+    checked = [entry for entry in engaged.values() if entry["checked"]]
+    print(terminal_text(
+        f"{link}: the post {'read as ' + seed if seed else 'could not be read'}, {comments} new comments, "
+        f"{reactions} reactions. Checked the posts of {len(checked)} reactors: {sum(bool(e['own']) for e in checked)} "
+        f"wrote about the topic themselves and are on the reading sheet."))
+    if channel == "x":
+        print("X likes are not read: only replies.")
+    if refused(call) > before:
+        print("The cap stopped some lookups. Run post again after raising it to finish this one.")
+    print("Run sheet to grade the commenters and the reactors' own posts. engaged.md lists the rest.")
+
+
+def engaged_sheet(project, plan, shared):
+    """People who reacted but have written nothing on the topic: interest, not evidence. Never on the shortlist."""
+    cell = lambda text: re.sub(r"[|\[\]]", r"\\\g<0>", terminal_text(str(text))).replace("<", "&lt;")
+    rows = [entry for entry in shared["engaged"].values() if not entry["own"]]
+    rows.sort(key=lambda entry: (-buyer_signal(entry["headline"], plan), entry["name"]))
+    lines = ["# Engaged, no evidence", "",
+             "They reacted to a post someone shared, and have written nothing of their own on the topic in the last month "
+             "(or were not checked). They are not prospects and never go on the shortlist. Treat them as a separate, "
+             "weaker list.", "", DATA_NOTE, "",
+             "| Name | Headline | Reaction | Looks like the buyer | Own posts checked |", "|---|---|---|---|---|"]
+    lines += [f"| {cell(entry['name'])} | {cell(entry['headline'])} | {cell(entry['reaction'])} | "
+              f"{'yes' if buyer_signal(entry['headline'], plan) >= 3 else 'maybe' if buyer_signal(entry['headline'], plan) else 'no'} | "
+              f"{'yes' if entry['checked'] else 'no'} |" for entry in rows]
+    save(project / "engaged.md", terminal_text("\n".join(lines)) + "\n")
+    table = io.StringIO()
+    out = csv.writer(table)
+    out.writerow(["name", "headline", "profile_url", "reaction", "buyer_signal", "own_posts_checked", "shared_posts"])
+    for entry in rows:
+        out.writerow([csv_value(entry["name"]), csv_value(entry["headline"]), entry["profile"], entry["reaction"],
+                      buyer_signal(entry["headline"], plan), entry["checked"], " ".join(entry["posts"])])
+    save(project / "engaged.csv", table.getvalue())
 
 
 # Identity and roles
@@ -2237,6 +2391,11 @@ def main(argv=None):
     follow.add_argument("--x-threads", type=whole(0), default=2)
     follow.add_argument("--quote-pages", type=whole(0), default=0)
     follow.add_argument("--employers", type=whole(0), default=4)
+    shared = commands.add_parser("post", help="read a post someone shared: its comments, who reacted, and the reactors' own posts")
+    shared.add_argument("link", nargs="+")
+    shared.add_argument("--comment-pages", type=whole(0, 20), default=3, help="pages of up to 100 comments")
+    shared.add_argument("--reaction-pages", type=whole(0, 20), default=3, help="pages of up to 100 reactions")
+    shared.add_argument("--likers", type=whole(0, 500), default=30, help="reactors whose own recent posts are read, best placed first")
     roles = commands.add_parser("verify", help="resolve identity and current role for graded prospects")
     roles.add_argument("--limit", type=whole(1), default=80)
     roles.add_argument("--retry-held", action="store_true", help="try held people again; lookups already paid for are reused")
@@ -2311,6 +2470,10 @@ def main(argv=None):
                     search(project, call, args.pages, args.x_pages)
                 elif args.command == "spider":
                     spider(project, call, args.threads, args.x_threads, args.quote_pages, args.employers)
+                elif args.command == "post":
+                    for link in args.link:
+                        read_post(project, call, link, comment_pages=args.comment_pages,
+                                  reaction_pages=args.reaction_pages, likers=args.likers)
                 elif args.command == "verify":
                     verify(project, call, args.limit, args.retry_held, args.low)
                 elif args.command == "jobs":

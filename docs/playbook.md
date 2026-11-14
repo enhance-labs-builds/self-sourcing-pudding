@@ -293,6 +293,21 @@ python3 pudding.py --project DIR sheet
 
 To search a prospect's employer for colleagues, add `"follow_employer": true` to their grade before running `spider`. Do this only for a real team with a distinctive name.
 
+### Optional: a post someone shared
+
+```sh
+python3 pudding.py --project DIR post LINK [LINK ...]
+python3 pudding.py --project DIR sheet
+```
+
+When the user hands you a post full of the right people, `post` reads it: the post itself, up to 300 comments, up to 300 reactions, and the recent posts of the 30 reactors whose headlines look most like the buyer. Paste the link as it was shared: Pudding drops the tracking on the end, which on LinkedIn can name the person who shared it. Run it inside a run folder that has a plan, since the plan says who the buyer is and what the topic is.
+
+- **The post and its commenters** go on the reading sheet first. A commenter wrote something of their own, so grade the comment like a post.
+- **Reactors** said nothing. Pudding skips sellers, recruiters, job seekers and people already seen, reads the rest's recent posts best placed first, and puts any post on the topic on the sheet (found by `liked P…`). Grade those like any post: a reactor with their own evidence is a prospect like anyone else.
+- **Reactors with nothing of their own** go to `engaged.md` and `engaged.csv`, never to the shortlist. They have shown interest, not evidence. Say so if the user wants to use them, and treat them as a separate, weaker list.
+
+`--comment-pages`, `--reaction-pages` and `--likers` change the limits. Running `post` again on the same link adds nothing twice and checks the next reactors in line. On X it reads replies only; X likes are not available.
+
 ## 4. Job ads
 
 ```sh
@@ -396,7 +411,7 @@ python3 pudding.py --project DIR shortlist
 
 ## Limits
 
-- LinkedIn and X search, LinkedIn comments, X replies and quote posts, job ads on LinkedIn and the major employer boards.
+- LinkedIn and X search, LinkedIn comments and reactions, X replies and quote posts, job ads on LinkedIn and the major employer boards. Reactions only on a post you hand to `post`; X likes are not read.
 - Quote posts need a metered read-only X connection on the Treg team. Without one they are skipped.
 - Pudding finds and verifies people. It sends nothing.
 - Real names and posts stay in the project folder. Keep it out of any repository.

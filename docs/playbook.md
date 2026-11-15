@@ -160,6 +160,7 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 | Verdict | Use it when |
 | --- | --- |
 | `prospect` | Yes to all three questions below. Set `fit`. |
+| `engaged` | Yes to questions 1 and 3, and they work on the topic every day, but they haven't described the job in `qualifies`. Set `fit`. |
 | `customer` | They already use the product. |
 | `churned` | They left the product. |
 | `built_own` | They built their own tool for this job and say it does the job. If they built something and it still hurts, they are a `prospect`. |
@@ -172,7 +173,9 @@ Read `sheet.md` and grade every row in `grades.json`. Save your grades before yo
 2. **Is it about this work?** The post is about the job the product does, the thing in `qualifies`, and not only the tools or the topic around it. A team that says it rolled out a tool and productivity is up has told you about the tool, not about this work.
 3. **Is there a team to sell to?** A company they work at or run, or a product with users. One client's project, a hobby build, a course exercise and a job hunt are not. An agency or a fractional leader describing how they deliver is their own work; describing one client's project is not.
 
-Three yeses make a `prospect`. Their own work with a no to question 2 or 3 is `borderline`.
+Three yeses make a `prospect`. Their own work with a no to question 2 or 3 is `borderline`, with one exception: `engaged`.
+
+**`engaged` keeps the right people who haven't described the problem.** Someone who builds with the tools the product sits beside, at a company the product is for, in a role in `buyer`, is worth knowing even when their post or comment is about the tool rather than the pain. "I build every screen with Claude Code and the Figma MCP now", from a product designer at a software company, is `engaged` for a seller of review tooling: their own work, a team to sell to, the topic every day, and no pain named. Grade `fit` the same way as a prospect. The shortlist lists them in their own section, below the people who described the problem, because they need a different first message. Agreement ("great post"), opinions about the news, a question to the author, and anyone at an agency, a vendor in the category or a recruiter are still `no`. A comment that reads as if an AI wrote it is judged on the person, not the style.
 
 **Two more questions decide the fit.** With the account grade, fit decides who the reviewer sees first.
 
@@ -191,6 +194,7 @@ Worked examples, for a seller of a CRM:
 | "We log every call in HubSpot." Account executive | `prospect`, `low` | Their own work on the CRM. Nothing hurts and they can't buy. |
 | "We built our own deal tracker in Notion and it does everything we need." Founder | `built_own` | Their own answer, and it works for them. |
 | "We built our own deal tracker and still lose a day a week keeping it in step." Founder | `prospect`, `strong` | They built something, it still hurts, and they could buy. |
+| "We live in HubSpot all day and just wired it into our billing system." Head of Revenue Operations | `engaged`, `look` | Their own work on the topic, at a company the CRM is for, in the buyer's role. Nothing about the job in `qualifies`, and nothing hurts. |
 | "We gave the whole company an AI assistant and productivity is up." Chief executive | `borderline` | Their own work, but not about the CRM. |
 | "Migrated a client from Pipedrive to Salesforce last month." Consultant | `borderline` | One client's project. |
 | "Five signs your CRM is holding you back." | `no` | Advice to the reader. |
@@ -203,7 +207,7 @@ Worked examples, for a seller of a CRM:
 
 A short reply can be a prospect if it passes the three questions. Agreement, advice and a job title are not evidence.
 
-`prospect`, `customer`, `churned` and `built_own` need a `quote` and a `why`. `borderline` and `no` can be the plain string, as `P0013` is above. Every row needs a grade, or it comes back on the next sheet.
+`prospect`, `engaged`, `customer`, `churned` and `built_own` need a `quote` and a `why`. `borderline` and `no` can be the plain string, as `P0013` is above, but give them a `why` too: one line on what ruled them out lets someone check the run later, and `check` counts the grades without one. Every row needs a grade, or it comes back on the next sheet.
 
 ### Search again
 
@@ -303,7 +307,8 @@ python3 pudding.py --project DIR sheet
 When the user hands you a post full of the right people, `post` reads it: the post itself, up to 300 comments, up to 300 reactions, and the recent posts of the 30 reactors whose headlines look most like the buyer. Paste the link as it was shared: Pudding drops the tracking on the end, which on LinkedIn can name the person who shared it. Run it inside a run folder that has a plan, since the plan says who the buyer is and what the topic is.
 
 - **The post and its commenters** go on the reading sheet first. A commenter wrote something of their own, so grade the comment like a post.
-- **Reactors** said nothing. Pudding skips sellers, recruiters, job seekers and people already seen, reads the rest's recent posts best placed first, and puts any post on the topic on the sheet (found by `liked P…`). Grade those like any post: a reactor with their own evidence is a prospect like anyone else.
+- **Reactors** said nothing. Pudding skips sellers, recruiters, job seekers and people already seen, reads the rest's recent posts best placed first, and puts any post on the topic on the sheet (found by `liked P…`). Grade those like any post: a reactor with their own evidence is a prospect like anyone else. "On the topic" means the post uses a plan phrase, a named tool from the searches, or one of `topic_words` in `plan.json`: list there the tools and terms the buyer uses day to day (for example the products the seller sits beside), since a buyer often posts about those without naming the problem.
+- **Most commenters on a popular post** describe no problem of their own: grade the ones who build with the topic every day, at a company the product is for, as `engaged`.
 - **Reactors with nothing of their own** go to `reactors.md` and `reactors.csv`, never to the shortlist. They have shown interest, not evidence. Say so if the user wants to use them, and treat them as a separate, weaker list.
 
 `--comment-pages`, `--reaction-pages` and `--likers` change the limits. Running `post` again on the same link adds nothing twice and checks the next reactors in line. On X it reads replies only; X likes are not available.

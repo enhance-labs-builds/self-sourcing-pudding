@@ -433,6 +433,64 @@ class AgentRunTest(unittest.TestCase):
         self.assertIn("same employer as Bo Low", rows["Ada Example"]["labels"])
         self.assertIn("current employer not in the post's headline", rows["Bo Low"]["labels"])
 
+    def test_engaged_people_are_checked_and_listed_apart_from_prospects(self):
+        posts = {}
+        for n, (author, text) in enumerate((("Ada Example", "We switched off Tool1 in March and our team moved fast."),
+                                            ("Bo Builder", "I build every screen with Tool2 now and love the workflow."),
+                                            ("Cy Low", "I tried Tool2 once at a hackathon, it was fun."),
+                                            ("Di None", "Great post!")), 1):
+            pudding.add_posts(posts, [{**POST, "author": author, "text": text, "profile": f"https://www.linkedin.com/in/p{n}",
+                                         "url": POST["url"].replace("0001", f"00{n}0")}], "q")
+        self.write("posts.json", posts)
+        grades = {"P0001": {"verdict": "prospect", "fit": "look", "why": "Own team.", "quote": "We switched off Tool1 in March"},
+                  "P0002": {"verdict": "engaged", "fit": "strong", "why": "Builds with it daily, no pain yet.",
+                            "quote": "I build every screen with Tool2 now"},
+                  "P0003": {"verdict": "engaged", "fit": "low", "why": "Hackathon.", "quote": "I tried Tool2 once at a hackathon"},
+                  "P0004": {"verdict": "no", "why": "Agreement only."}}
+        self.write("grades.json", {**grades, "P0002": {**grades["P0002"], "fit": None}})
+        with self.assertRaisesRegex(ValueError, "fit must be"):    # an engaged person carries a fit, like a prospect
+            pudding.check_grades(self.project)
+        self.write("grades.json", {**grades, "P0002": {**grades["P0002"], "quote": "not in the post at all"}})
+        with self.assertRaisesRegex(ValueError, "copied exactly"):  # and a real quote of their own words
+            pudding.check_grades(self.project)
+        self.write("grades.json", grades)
+        looked_up = []
+
+        def call(endpoint, params, transform):
+            looked_up.append(params.get("url"))
+            return None
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            pudding.verify(self.project, call, 10)
+        self.assertEqual(looked_up[0], "https://www.linkedin.com/in/p1")      # prospects first
+        self.assertIn("https://www.linkedin.com/in/p2", looked_up)              # engaged people are checked too
+        self.assertNotIn("https://www.linkedin.com/in/p3", looked_up)           # a weak match is listed unchecked
+        person = lambda name, company: {"name": name, "role": "CTO", "company": company, "role_basis": "current role", "other_roles": []}
+        entry = lambda n, name, company: {"channel": "linkedin", "source_url": posts[f"P000{n}"]["url"], "hold": None,
+                                          "verified": person(name, company), "profile_url": f"https://www.linkedin.com/in/p{n}"}
+        self.write("people.json", {"P0001": entry(1, "Ada Example", "Fig"), "P0002": entry(2, "Bo Builder", "Fig")})
+        pudding.shortlist(self.project)
+        with (self.project / "shortlist.csv").open(newline="") as file:
+            rows = list(csv.DictReader(file))
+        self.assertEqual([(row["name"], row["kind"]) for row in rows], [("Ada Example", "firsthand post"), ("Bo Builder", "engaged")])
+        page = (self.project / "shortlist.md").read_text()
+        self.assertIn("## Worth contacting (1)", page)
+        self.assertIn("## Engaged (1)", page)
+        counts = pudding.funnel(self.project)
+        self.assertEqual((counts["Worth contacting"], counts["Engaged"], counts["Engaged graded"]), (1, 1, 2))
+        # A run graded before engaged existed reads exactly as before.
+        self.write("grades.json", {"P0001": grades["P0001"], "P0002": "no", "P0003": "borderline", "P0004": "no"})
+        pudding.shortlist(self.project)
+        self.assertNotIn("Engaged", pudding.funnel(self.project))
+        self.assertNotIn("## Engaged", (self.project / "shortlist.md").read_text())
+
+    def test_topic_words_count_a_reactors_post_as_on_topic(self):
+        self.assertEqual(pudding.on_topic("We prototype in Figmatic every day.", PLAN), [])
+        self.assertEqual(pudding.on_topic("We prototype in Figmatic every day.", {**PLAN, "topic_words": ["Figmatic"]}), ["Figmatic"])
+        self.write("plan.json", {**PLAN, "topic_words": ["Figmatic", "Figmatic"]})
+        with self.assertRaisesRegex(ValueError, "repeats"):
+            pudding.load_plan(self.project)
+
     def test_job_grades_carry_fit_and_contacts_prefer_someone_already_verified(self):
         self.write("jobs.json", {"J001": {"id": "J001", "url": "https://jobs.ashbyhq.com/fig/1", "company": "Fig",
                                           "title": "RevOps Lead", "published_on": "2026-10-01",

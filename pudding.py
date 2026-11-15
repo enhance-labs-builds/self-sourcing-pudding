@@ -28,9 +28,12 @@ import job_board
 import treg as t
 from webpage import Page, fetch_page, public_url, terminal_text
 
-VERDICTS = {"prospect", "customer", "churned", "built_own", "borderline", "no"}
+VERDICTS = {"prospect", "engaged", "customer", "churned", "built_own", "borderline", "no"}
 JOB_VERDICTS = {"mandate", "customer", "no"}
-QUOTED = {"prospect", "customer", "churned", "built_own"}
+QUOTED = {"prospect", "engaged", "customer", "churned", "built_own"}
+# Graded people Pudding looks up and lists. A prospect described the problem; someone engaged is the right person,
+# working on the topic in their own words, who hasn't described the problem itself. Both carry a fit.
+LISTED = ("prospect", "engaged")
 FITS = ("strong", "look", "low")
 LIMITS = {"linkedin_queries": (5, 40), "x_queries": (0, 25), "job_queries": (0, 8)}
 PARALLEL = 4  # Lookups sent at once. Each takes a few seconds, and a run makes several hundred.
@@ -447,7 +450,7 @@ def load_plan(project):
     for key in ("product", "buyer", "qualifies"):
         if not isinstance(plan.get(key), str) or not plan[key].strip():
             raise ValueError(f"plan.json needs a sentence for {key}.")
-    for key in ("exclude_employers", "customers", "owner_titles", "seller_terms", *LIMITS):
+    for key in ("exclude_employers", "customers", "owner_titles", "seller_terms", "topic_words", *LIMITS):
         values = plan.setdefault(key, [])
         if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() or "\n" in v or len(v) > 240
                                                for v in values):
@@ -465,7 +468,7 @@ def load_plan(project):
 
 
 PLAN_FIELDS = {"product", "buyer", "qualifies", "exclude_employers", "customers", "owner_titles", "employer_topic",
-               "seller_terms", "ideal_account", *LIMITS}
+               "seller_terms", "ideal_account", "topic_words", *LIMITS}
 
 
 def plan_notes(plan, searched=False):
@@ -759,7 +762,7 @@ def check_grades(project):
                 problems.append(f"{key}: the quote must be at least 15 characters copied exactly from the post.")
             if not norm(grade.get("why")):
                 problems.append(f"{key}: say why in one sentence.")
-        if grade.get("fit", "look" if grade["verdict"] != "prospect" else None) not in FITS:
+        if grade.get("fit", "look" if grade["verdict"] not in LISTED else None) not in FITS:
             problems.append(f"{key}: fit must be strong, look or low.")
         if not strings(grade.get("labels", [])):
             problems.append(f"{key}: labels must be a list of short strings.")
@@ -788,7 +791,7 @@ def spider(project, call, threads, x_threads, quote_pages, employers):
     since = since_date(project)
     # Strong and look prospects first, then low ones and posts by customers and leavers: their threads draw peers.
     seeds = [posts[key] for key, grade in grades.items()
-             if grade["verdict"] in QUOTED and not posts[key].get("parent") and key not in done["threads"]]
+             if grade["verdict"] in QUOTED - {"engaged"} and not posts[key].get("parent") and key not in done["threads"]]
     seeds.sort(key=lambda p: (FITS.index(grades[p["id"]].get("fit", "low")), p["id"]))
     budget = {"linkedin": threads, "x": x_threads}
     for seed in seeds:
@@ -883,6 +886,8 @@ def on_topic(text, plan):
     low = text.casefold()
     terms = [term for term in topic_terms(plan) + [plan.get("employer_topic", "")]
              if len(term) > 3 and (" " in term.strip() or term[:1].isupper()) and not re.match(r"(?:my|your|the|a)\b", term, re.I)]
+    # topic_words: the tools and terms someone working on the topic uses, beyond the problem the searches look for.
+    terms += [term for term in plan.get("topic_words", []) if len(term.strip()) > 2]
     return [term for term in terms if term.casefold() in low]
 
 
@@ -1319,12 +1324,13 @@ def verify(project, call, limit, retry_held=False, low=False):
     posts, grades = check_grades(project)
     people = read(project / "people.json", {})
     # A weak match is listed unchecked: the lookups go to people worth contacting.
-    unchecked = [key for key, grade in grades.items() if grade["verdict"] == "prospect" and grade["fit"] == "low"
+    unchecked = [key for key, grade in grades.items() if grade["verdict"] in LISTED and grade["fit"] == "low"
                  and key not in people and not low]
-    todo = [key for key, grade in grades.items() if grade["verdict"] == "prospect" and key not in unchecked
+    todo = [key for key, grade in grades.items() if grade["verdict"] in LISTED and key not in unchecked
             and (key not in people or not people[key]["verified"]
                  and (retry_held or named_profile(grade) or people[key]["hold"] == CAPPED))]
-    todo.sort(key=lambda key: (FITS.index(grades[key]["fit"]), key))
+    # Prospects first, so a tight cap is spent on the people who described the problem.
+    todo.sort(key=lambda key: (grades[key]["verdict"] == "engaged", FITS.index(grades[key]["fit"]), key))
     searched = read(project / "web-hits.json", {})
 
     def check(key):
@@ -1965,11 +1971,13 @@ def prioritise(project, rows, created):
         row["reach"] = f"{person['reach']} {person.get('role', 'buyer')}" if person.get("reach") else ""
         row["labels"] = [*(["buying now"] if row["buying_now"] else []), *(["new in role"] if person.get("new_role") else []),
                          *([f"check: {note}"] if (note := person.get("warning") or person.get("check")) else []), *row["labels"]]
-    rows.sort(key=lambda row: (row["fit"] == "low", -row["priority"], -(day(row["published_on"]) or date.min).toordinal()))
+    rows.sort(key=lambda row: (row["fit"] == "low", row["kind"] == "engaged", -row["priority"],
+                               -(day(row["published_on"]) or date.min).toordinal()))
     ordered, placed = [], set()
     for row in rows:
         together_with = [other for other in firms[firm(row)] if other is not row and id(other) not in placed
-                         and (other["fit"] == "low") == (row["fit"] == "low")]
+                         and (other["fit"] == "low") == (row["fit"] == "low")
+                         and (other["kind"] == "engaged") == (row["kind"] == "engaged")]
         if id(row) in placed or row["kind"] == "entry point" and any(other["kind"] != "entry point" for other in together_with):
             continue  # Placed already, or waiting for the colleague who named them.
         group = [row] + together_with
@@ -2179,7 +2187,7 @@ def shortlist_rows(project):
             continue  # Their colleague is no longer on the list, so neither are they.
         source = posts.get(origin) or jobs[origin]
         grade = grades.get(origin) or job_grades.get(origin, {})
-        if grade.get("verdict") not in {"prospect", "mandate"}:
+        if grade.get("verdict") not in {*LISTED, "mandate"}:
             continue  # Regraded after verification: the new verdict decides where they appear.
         name = source.get("author") or source.get("company")
         if not entry["verified"]:
@@ -2200,7 +2208,7 @@ def shortlist_rows(project):
             continue
         labels, fit = list(grade.get("labels", [])), grade.get("fit", "look")
         if origin != key:  # They said nothing themselves: worth a look, beside the colleague who did.
-            if fit == "low" or not any(same_person(name, person["name"]) for name in grade.get("named", [])):
+            if fit == "low" or grade.get("verdict") != "prospect" or not any(same_person(name, person["name"]) for name in grade.get("named", [])):
                 continue  # Their colleague is a weak match now, or no longer names them.
             labels, fit = [entry["identity_basis"]], "look"
         if person.get("open_to_work"):
@@ -2224,7 +2232,8 @@ def shortlist_rows(project):
         if key in jobs and len(compact(brand(jobs[key]["company"]))) <= 5:
             labels.append("short company name: confirm it is the same employer")
         rows[entry["profile_url"]] = {
-            "fit": fit, "kind": "entry point" if origin != key else "hiring signal" if key in jobs else "firsthand post",
+            "fit": fit, "kind": "entry point" if origin != key else "hiring signal" if key in jobs
+            else "engaged" if grade.get("verdict") == "engaged" else "firsthand post",
             "name": person["name"], "first_name": person.get("first_name", ""), "last_name": person.get("last_name", ""),
             "role": person["role"], "company": person["company"], "company_url": person.get("company_url") or "",
             "company_domain": entry.get("company_domain") or (
@@ -2298,7 +2307,8 @@ def shortlist(project):
                 found.setdefault(author_key(posts[key]), (posts[key]["author"], posts[key]["url"], norm(grade.get("why"))))
         return list(found.values())
 
-    contact = [row for row in rows if row["fit"] != "low"]
+    contact = [row for row in rows if row["fit"] != "low" and row["kind"] != "engaged"]
+    engaged = [row for row in rows if row["fit"] != "low" and row["kind"] == "engaged"]
     low = [row for row in rows if row["fit"] == "low"]
     customers = authors("customer") + customers + [
         (jobs[key]["company"], jobs[key]["url"], norm(grade.get("why")) or "Job ad from an existing customer.")
@@ -2311,11 +2321,14 @@ def shortlist(project):
     lines = ["# Shortlist", "", " · ".join(f"{label}: {value}" for label, value in funnel(project).items()), "",
              f"## Worth contacting ({spoke}{by_account}" + (f", and {named} colleague{'s' * (named != 1)} they named)" if named else ")"),
              "", *table(contact)]
+    if engaged:
+        lines += ["", f"## Engaged ({len(engaged)})", "", "Verified, the right kind of person, and working on the topic in their own "
+                  "words, but they haven't described the problem. Reach them differently from the people above.", "", *table(engaged)]
     if low:
         lines += ["", f"## Low fit ({len(low)})", "", "Verified, with real evidence, but a weak match for this product.", "", *table(low)]
     unchecked = {}
     for key, grade in grades.items():  # Low fit, and so never looked up.
-        if grade["verdict"] == "prospect" and grade.get("fit") == "low" and key not in read(project / "people.json", {}):
+        if grade["verdict"] in LISTED and grade.get("fit") == "low" and key not in read(project / "people.json", {}):
             unchecked.setdefault(author_key(posts[key]), (posts[key]["author"], posts[key]["url"], norm(grade.get("why"))))
     sections = (("Low fit, not checked", list(unchecked.values())), ("Already customers", customers),
                 ("Left the product", authors("churned")), ("Built their own instead", authors("built_own")),
@@ -2346,14 +2359,15 @@ def funnel(project):
     counts = {
         "Posts captured": len(posts), "Authors": len({author_key(post) for post in posts.values()}),
         "Authors graded": len({author_key(posts[key]) for key in grades if key in posts}),
-        "Prospects": verdict("prospect"), "Customers": verdict("customer"), "Left the product": verdict("churned"),
+        "Prospects": verdict("prospect"), **({"Engaged graded": n} if (n := verdict("engaged")) else {}), "Customers": verdict("customer"), "Left the product": verdict("churned"),
         "Built their own": verdict("built_own"), "Borderline": verdict("borderline"),
         "Job ads found": len(jobs), "Job ads graded": len(job_grades), "Job mandates": job_verdict("mandate"),
     }
     try:
         rows, _, held, *_ = shortlist_rows(project)
         counts.update({
-            "Worth contacting": sum(row["fit"] != "low" and row["kind"] != "entry point" for row in rows),
+            "Worth contacting": sum(row["fit"] != "low" and row["kind"] not in {"entry point", "engaged"} for row in rows),
+            **({"Engaged": engaged} if (engaged := sum(row["fit"] != "low" and row["kind"] == "engaged" for row in rows)) else {}),
             # People a prospect credited have not spoken themselves, so they are counted apart, and only when there are any.
             **({"Named colleagues": named} if (named := sum(row["fit"] != "low" and row["kind"] == "entry point" for row in rows)) else {}),
             "Strong": sum(row["fit"] == "strong" for row in rows),
@@ -2460,7 +2474,12 @@ def main(argv=None):
                 if stray:
                     print(f"Note: accounts.json grades {len(stray)} IDs that are not on the list, so they change nothing: "
                           + ", ".join(stray[:8]) + (" and more." if len(stray) > 8 else "."))
-            quoted = sum(grade["verdict"] in QUOTED for grade in check_grades(project)[1].values())
+            graded = check_grades(project)[1]
+            silent = sum(not norm(grade.get("why")) for grade in graded.values() if grade["verdict"] not in QUOTED)
+            if silent:
+                print(f"Note: {silent} grades of borderline or no give no reason. A one-line `why` on every grade lets "
+                      "someone check the run later.")
+            quoted = sum(grade["verdict"] in QUOTED for grade in graded.values())
             quoted += sum(grade["verdict"] == "mandate" for grade in check_job_grades(project)[1].values())
             print("plan.json, grades.json" + (", job-grades.json and accounts.json" if (project / "accounts.json").exists()
                                               else " and job-grades.json") + " are valid."

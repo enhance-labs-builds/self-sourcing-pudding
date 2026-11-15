@@ -852,6 +852,8 @@ MAKER = re.compile(r"\b(?:engineer|developer|architect|designer|product)\b", re.
 def shared_post_url(text):
     """(channel, link) for a LinkedIn or X post as someone pasted it. Everything after the path goes: a LinkedIn
     share link carries tracking that can name the person who shared it, and nothing in it is needed."""
+    if not text.strip() or re.search(r"\s", text.strip()):
+        raise ValueError("Give one post link at a time. Paste several as separate links, one per line or space.")
     parts = urlsplit(text.strip())
     host = (parts.hostname or "").removeprefix("www.").removeprefix("mobile.")
     if parts.scheme in {"http", "https"} and host in {"x.com", "twitter.com"}:
@@ -891,7 +893,11 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
     channel, link = shared_post_url(link)
     plan, posts = load_plan(project), load_posts(project)
     shared = read(project / "shared.json", {"posts": {}, "engaged": {}})
-    skip = set(read(project / "previous.json", {})) | set(read(project / "suppress.json", {}).get("profiles", []))
+    previous = read(project / "previous.json", {})
+    skip = set(previous) | set(read(project / "suppress.json", {}).get("profiles", []))
+    # Reactions come back with opaque member IDs, never the profile link we hold, so people already known are
+    # also matched by name until their own posts give their real link.
+    known_names = {plain_name(entry.get("name") or "") for entry in previous.values() if isinstance(entry, dict)} - {""}
     found_by = f"shared {link}"
     before = refused(call)
     seed = None
@@ -917,6 +923,8 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
         rows = call(t.X_REPLIES, {"url": link, "limit": 20}, lambda data: t.x_posts(data, replies=True)) or []
         comments += add_posts(posts, rows, f"reply to {link}")
     commenters = {author_key(post) for post in posts.values() if post.get("parent") == seed and seed}
+    talkers = {plain_name(post["author"]) for post in posts.values()
+               if seed and (post.get("parent") == seed or post["id"] == seed)} - {""}
     engaged = shared["engaged"]
     reactions = 0
     if channel == "linkedin":
@@ -928,7 +936,8 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
             rows, pages = got
             for row in rows:
                 reactions += 1
-                if row["profile"] in (author, *commenters) or row["profile"] in skip:
+                if (row["profile"] in (author, *commenters) or row["profile"] in skip
+                        or plain_name(row["name"]) in talkers | known_names):
                     continue
                 entry = engaged.setdefault(row["profile"], {**row, "posts": [], "checked": False, "own": []})
                 if link not in entry["posts"]:
@@ -950,6 +959,11 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
         topical = [row for row in rows if (row.get("published_on") or "") >= oldest and on_topic(row["text"], plan)
                    and (TEAM.search(row["text"]) or OWN.search(row["text"])) and t.social_source_key(row) not in seen_post]
         topical.sort(key=lambda row: -score(row, topic_terms(plan), plan["buyer"]))
+        real = next((row["profile"] for row in rows if row.get("profile")), None)
+        if real:  # Their posts carry their real profile link: now they can be matched against people already known.
+            entry["profile_url"] = real
+            if real in skip:
+                continue
         for row in topical[:per_liker]:
             add_posts(posts, [row], f"liked {seed or link}")
             key = next(key for key, post in posts.items() if t.social_source_key(post) == t.social_source_key(row))
@@ -979,7 +993,8 @@ def engaged_sheet(project, plan, shared):
     lines = ["# Engaged, no evidence", "",
              "They reacted to a post someone shared, and have written nothing of their own on the topic in the last month "
              "(or were not checked). They are not prospects and never go on the shortlist. Treat them as a separate, "
-             "weaker list.", "", DATA_NOTE, "",
+             "weaker list. LinkedIn gives reactors as member IDs, so most links here are member-ID links: they open the "
+             "profile, but match them against your CRM by name, and resolve them before an outreach tool.", "", DATA_NOTE, "",
              "| Name | Headline | Reaction | Looks like the buyer | Own posts checked |", "|---|---|---|---|---|"]
     lines += [f"| {cell(entry['name'])} | {cell(entry['headline'])} | {cell(entry['reaction'])} | "
               f"{'yes' if buyer_signal(entry['headline'], plan) >= 3 else 'maybe' if buyer_signal(entry['headline'], plan) else 'no'} | "
@@ -989,7 +1004,9 @@ def engaged_sheet(project, plan, shared):
     out = csv.writer(table)
     out.writerow(["name", "headline", "profile_url", "reaction", "buyer_signal", "own_posts_checked", "shared_posts"])
     for entry in rows:
-        out.writerow([csv_value(entry["name"]), csv_value(entry["headline"]), entry["profile"], entry["reaction"],
+        # The real link if their posts gave it; otherwise LinkedIn's member-ID link, exactly as given, which opens
+        # the profile but has to be resolved before most outreach tools will take it.
+        out.writerow([csv_value(entry["name"]), csv_value(entry["headline"]), entry.get("profile_url") or entry["lookup"], entry["reaction"],
                       buyer_signal(entry["headline"], plan), entry["checked"], " ".join(entry["posts"])])
     save(project / "engaged.csv", table.getvalue())
 
@@ -2471,7 +2488,8 @@ def main(argv=None):
                 elif args.command == "spider":
                     spider(project, call, args.threads, args.x_threads, args.quote_pages, args.employers)
                 elif args.command == "post":
-                    for link in args.link:
+                    # A pasted list arrives as one argument in some shells: each link is read on its own.
+                    for link in dict.fromkeys(part for text in args.link for part in text.split()):
                         read_post(project, call, link, comment_pages=args.comment_pages,
                                   reaction_pages=args.reaction_pages, likers=args.likers)
                 elif args.command == "verify":

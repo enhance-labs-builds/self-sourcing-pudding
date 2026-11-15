@@ -757,7 +757,9 @@ class AgentRunTest(unittest.TestCase):
                          ("linkedin", "https://www.linkedin.com/feed/update/urn:li:activity:7527067885928833024"))
         self.assertEqual(shared("https://twitter.com/ada/status/1888888888888888888?s=20&t=abc"),
                          ("x", "https://x.com/ada/status/1888888888888888888"))
-        for link in ("https://www.linkedin.com/in/ada", "https://example.com/posts/x-activity-7527067885928833024",
+        two = ("https://www.linkedin.com/posts/a_x-activity-7527067885928833024-ab "
+               "https://www.linkedin.com/posts/b_y-activity-7527067885928833025-cd")
+        for link in (two, "https://www.linkedin.com/in/ada", "https://example.com/posts/x-activity-7527067885928833024",
                      "http://www.linkedin.com/posts/moe_x-activity-7527067885928833024", "not a link"):
             with self.assertRaises(ValueError):
                 shared(link)
@@ -782,7 +784,9 @@ class AgentRunTest(unittest.TestCase):
                     ("moe", "Moe", "Designer"), ("cara", "Cara Cole", "CTO at Fig"), ("dan", "Dan Day", "CTO at Larch"),
                     ("eve", "Eve Eden", "Talent partner and recruiter"), ("fay", "Fay Fox", "Head of Revenue Operations at Plum"),
                     ("gus", "Gus Gray", "Founder, CRM consultancy"), ("ida", "Ida Ivy", "VP Sales"),
-                    ("ACoAAB12x", "Jo Jones", "=HYPERLINK(1) engineering lead"))]
+                    ("ACoAAB12x", "Jo Jones", "=HYPERLINK(1) engineering lead"),
+                    ("ACoAAKen", "Ken Kay", "CTO at Known"),           # already contacted, but shows up as a member ID
+                    ("ACoAACara", "Cara Cole", "CTO at Fig"))]
                 + [{"reactionType": "LIKE", "actor": {"name": "Acme", "linkedinUrl": "https://www.linkedin.com/company/acme"}}]},
         }
         old = lambda post: {**post, "postedAt": {"date": "2026-08-01T00:00:00Z"}}
@@ -800,7 +804,8 @@ class AgentRunTest(unittest.TestCase):
             raw = own[params["profile"]] if endpoint == t.LINKEDIN_USER_POSTS else answers[endpoint]
             return transform({"elements": raw} if endpoint == t.LINKEDIN_USER_POSTS else raw)
 
-        self.write("previous.json", {"https://www.linkedin.com/in/ida": {"name": "Ida Ivy"}})
+        self.write("previous.json", {"https://www.linkedin.com/in/ida": {"name": "Ida Ivy"},
+                                     "https://www.linkedin.com/in/ken-k": {"name": "Ken Kay"}})
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             pudding.read_post(self.project, call, link + "/?utm_source=x&rcm=ACoAABr3b04", likers=2)
@@ -820,7 +825,11 @@ class AgentRunTest(unittest.TestCase):
             self.assertIn(name, engaged)
         for name in ("Fay Fox", "Moe", "Cara Cole", "Ida Ivy", "Acme"):
             self.assertNotIn(f"| {name} |", engaged)
-        self.assertIn("'=HYPERLINK", (self.project / "engaged.csv").read_text())   # a formula stays text in a spreadsheet
+        engaged_csv = (self.project / "engaged.csv").read_text()
+        self.assertIn("'=HYPERLINK", engaged_csv)                   # a formula stays text in a spreadsheet
+        self.assertIn("https://www.linkedin.com/in/ACoAAB12x", engaged_csv)   # a member-ID link keeps its case, or it breaks
+        self.assertNotIn("Ken Kay", engaged)                        # matched by name: already contacted
+        self.assertEqual(engaged.count("Cara Cole"), 0)             # a commenter is not listed again as a reactor
         self.assertIn("1 wrote about the topic themselves", out.getvalue())
         # Again: nothing doubles, and the next reactor in line is checked, by the link as LinkedIn gave it.
         sent.clear()

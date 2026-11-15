@@ -447,7 +447,7 @@ def load_plan(project):
     for key in ("product", "buyer", "qualifies"):
         if not isinstance(plan.get(key), str) or not plan[key].strip():
             raise ValueError(f"plan.json needs a sentence for {key}.")
-    for key in ("exclude_employers", "customers", "owner_titles", "seller_terms", *LIMITS):
+    for key in ("exclude_employers", "customers", "owner_titles", "seller_terms", "topic_words", *LIMITS):
         values = plan.setdefault(key, [])
         if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() or "\n" in v or len(v) > 240
                                                for v in values):
@@ -465,7 +465,7 @@ def load_plan(project):
 
 
 PLAN_FIELDS = {"product", "buyer", "qualifies", "exclude_employers", "customers", "owner_titles", "employer_topic",
-               "seller_terms", "ideal_account", *LIMITS}
+               "seller_terms", "ideal_account", "topic_words", *LIMITS}
 
 
 def plan_notes(plan, searched=False):
@@ -883,6 +883,8 @@ def on_topic(text, plan):
     low = text.casefold()
     terms = [term for term in topic_terms(plan) + [plan.get("employer_topic", "")]
              if len(term) > 3 and (" " in term.strip() or term[:1].isupper()) and not re.match(r"(?:my|your|the|a)\b", term, re.I)]
+    # topic_words: the tools and terms someone working on the topic uses, beyond the problem the searches look for.
+    terms += [term for term in plan.get("topic_words", []) if len(term.strip()) > 2]
     return [term for term in terms if term.casefold() in low]
 
 

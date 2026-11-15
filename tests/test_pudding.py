@@ -842,6 +842,13 @@ class AgentRunTest(unittest.TestCase):
         self.assertFalse(shared["reactors"]["https://www.linkedin.com/in/eve"]["checked"])   # a recruiter is never looked up
         self.assertFalse(shared["reactors"]["https://www.linkedin.com/in/gus"]["checked"])   # nor a seller
 
+    def test_topic_words_count_a_reactors_post_as_on_topic(self):
+        self.assertEqual(pudding.on_topic("We prototype in Figmatic every day.", PLAN), [])
+        self.assertEqual(pudding.on_topic("We prototype in Figmatic every day.", {**PLAN, "topic_words": ["Figmatic"]}), ["Figmatic"])
+        self.write("plan.json", {**PLAN, "topic_words": ["Figmatic", "Figmatic"]})
+        with self.assertRaisesRegex(ValueError, "repeats"):
+            pudding.load_plan(self.project)
+
     def test_spider_retries_what_the_cap_refused(self):
         posts = {}
         pudding.add_posts(posts, [POST], "q")

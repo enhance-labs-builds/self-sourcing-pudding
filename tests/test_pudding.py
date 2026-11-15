@@ -1218,7 +1218,9 @@ class AgentRunTest(unittest.TestCase):
         page = "https://www.linkedin.com/company/fig"
         company = {"element": {"linkedinUrl": page, "name": "Fig, Inc.", "website": "www.fig.example/?utm_source=linkedin",
                                "employeeCount": 59, "industries": [{"name": "Software Development"}],
-                               "tagline": "Invoices for\nsmall teams."}}
+                               "tagline": "Invoices for\nsmall teams.",
+                               "locations": [{"country": "NL", "headquarter": False},
+                                             {"country": "jp", "headquarter": True, "parsed": {"countryCode": "JP"}}]}}
         calls = []
 
         def call(endpoint, params, transform):
@@ -1231,7 +1233,7 @@ class AgentRunTest(unittest.TestCase):
         people = json.loads((self.project / "people.json").read_text())
         self.assertEqual(people["P0001"]["employer"], {"name": "Fig, Inc.", "url": "https://www.fig.example/", "employees": 59,
                                                        "industry": "Software Development", "about": "Invoices for small teams.",
-                                                   "type": "", "followers": None, "founded": None})
+                                                   "type": "", "followers": None, "founded": None, "country": "JP"})
         self.assertEqual(calls, [t.PROFILE, t.COMPANY])
         pudding.shortlist(self.project)
         with (self.project / "shortlist.csv").open(newline="") as file:
@@ -1511,6 +1513,58 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual([rows[key]["priority"] for key in ("P0001", "P0002", "P0003")], [3.5, 4.0, 5.4])
         self.assertEqual((order[0], rows["P0001"]["reach"]), ("P0003", "A buyer"))
 
+    def test_markets_move_up_the_countries_a_seller_covers_without_hiding_anyone(self):
+        page = lambda slug: f"https://www.linkedin.com/company/{slug}"
+        people = [("P0001", "look", "Founder", "Target Example", page("target")),
+                  ("P0002", "look", "Founder", "Other Example", page("other")),
+                  ("P0003", "look", "Founder", "Next Example", page("next")),
+                  ("P0004", "look", "Founder", "Branch Example", page("branch")),
+                  ("P0005", "strong", "Founder", "Strong Example", page("strong"))]
+        self.ranked_run(people)
+        entries = json.loads((self.project / "people.json").read_text())
+        for key, country in {"P0001": "DE", "P0002": "US", "P0003": "NL", "P0004": "PT", "P0005": "GB"}.items():
+            entries[key]["verified"]["country"] = country
+        entries["P0004"]["employer"] = {"name": "Branch Example", "country": "AT"}  # The company is in Vienna; they work from Lisbon.
+        self.write("people.json", entries)
+        rows = {row["key"]: row for row in pudding.shortlist_rows(self.project)[0]}
+        self.assertEqual({row["market"] for row in rows.values()}, {""})  # No markets in the plan: the order is as before.
+        self.write("plan.json", {**PLAN, "markets": ["DE", "AT", "CH"], "next_markets": ["NL"]})  # Payroll built for these tax rules.
+        order, _, *_ = pudding.shortlist_rows(self.project)
+        rows = {row["key"]: row for row in order}
+        self.assertEqual({key: row["market"] for key, row in rows.items()},
+                         {"P0001": "target", "P0002": "other", "P0003": "next", "P0004": "target", "P0005": "other"})
+        # A target market is worth an account grade, so strong evidence from elsewhere still stands level with a weaker post.
+        self.assertEqual([row["key"] for row in order], ["P0005", "P0001", "P0004", "P0003", "P0002"])
+        self.assertEqual((rows["P0001"]["priority"] - rows["P0002"]["priority"], rows["P0005"]["priority"]), (1, rows["P0001"]["priority"]))
+        self.assertNotIn("market", " ".join(rows["P0002"]["labels"]))  # The column says it; no label on the person.
+        self.assertEqual(rows["P0004"]["company_country"], "AT")
+        pudding.shortlist(self.project)
+        self.assertIn("2 in your target markets", (self.project / "shortlist.md").read_text())
+        with (self.project / "shortlist.csv").open(newline="") as file:
+            self.assertEqual(next(csv.DictReader(file))["market"], "other")
+        for markets, later, problem in ((["UK"], [], "United Kingdom is GB"), (["jp"], [], "two-letter country codes"),
+                                       (["FR"], ["FR"], "no country can be in both"), ([], ["DE"], "next_markets needs markets")):
+            self.write("plan.json", {**PLAN, "markets": markets, "next_markets": later})
+            with self.assertRaisesRegex(ValueError, problem):
+                pudding.load_plan(self.project)
+
+    def test_a_missing_company_country_is_bought_only_when_markets_are_set(self):
+        page = "https://www.linkedin.com/company/fig"
+        self.ranked_run([("P0001", "look", "Founder", "Fig", page)])
+        self.write("companies.json", {"fig": {"name": "Fig", "type": "Privately Held"}})  # Saved by an older version.
+        calls = []
+
+        def call(endpoint, params, transform):
+            calls.append(endpoint)
+            return transform({"element": {"linkedinUrl": page, "name": "Fig", "locations": [{"country": "JP"}]}})
+
+        pudding.accounts(self.project, call)
+        self.assertEqual(calls, [])
+        self.write("plan.json", {**PLAN, "markets": ["JP"]})
+        pudding.accounts(self.project, call)
+        self.assertEqual((calls, json.loads((self.project / "companies.json").read_text())["fig"]["country"]), ([t.COMPANY], "JP"))
+        self.assertEqual(pudding.shortlist_rows(self.project)[0][0]["market"], "target")
+
     def test_buying_now_and_a_new_role_move_someone_up(self):
         page = "https://www.linkedin.com/company/same"
         order = self.ranked_run([("P0001", "strong", "Founder", "One Example", page),
@@ -1720,7 +1774,7 @@ class AgentRunTest(unittest.TestCase):
                   "role_basis", "identity_basis", "channel", "source_url", "published_on", "found_by", "run_date", "id",
                   "quote", "why", "labels", "other_sources", "your_answer", "your_note", "work_email", "work_email_status")
         self.assertEqual(pudding.CSV_FIELDS[:len(before)], before)
-        self.assertEqual(pudding.CSV_FIELDS[len(before):], ("account", "account_why", "reach", "priority"))
+        self.assertEqual(pudding.CSV_FIELDS[len(before):], ("account", "account_why", "reach", "priority", "company_country", "market"))
 
     def test_executives_by_any_spelling_rank_as_executives(self):
         for role in ("CTO", "CFO", "Chief Technology Officer", "Co-Founder & CTO", "Owner", "Managing Partner", "Managing Director",

@@ -47,7 +47,7 @@ If there was an earlier run, add `--previous OLD_DIR`. See "Following runs" belo
 
 If the user has people or companies already in their pipeline, add `--suppress FILE`. It takes a plain list (one LinkedIn link, work email, domain or company name per line) or a CRM export with a header row. `start` says how many lines it could not use; tell the user if that number is large.
 
-Read `site.md`. If the user told you who their buyer is, trust that over the site. If `start` says the site returned little text, ask the user to describe the product and the buyer. Then fill in `plan.json`:
+Read `site.md`. Then ask the user two questions, unless they have already answered them: who their target customers are, and what their target markets are. Trust their answers over the site. If `start` says the site returned little text, ask them to describe the product too. Then fill in `plan.json`:
 
 | Field | What to write |
 | --- | --- |
@@ -63,6 +63,8 @@ Read `site.md`. If the user told you who their buyer is, trust that over the sit
 | `owner_titles` | Titles of the people who own this work, most likely owner first. They are used to find a contact behind a job ad, and when two people fit, the earlier title wins. |
 | `employer_topic` | One word or short phrase for follow-up searches at an employer, such as `CRM`. |
 | `ideal_account` | One sentence on which accounts matter most to this business: the size, stage, segment or names that make a deal count. For example "funded AI-native startups and software brands other buyers know", or "owner-led firms under 50 people where the founder sells". Ask the user if the site doesn't say. It orders the shortlist; it removes nobody. |
+| `markets` | The user's answer on target markets, as two-letter country codes. A payroll product built for German, Austrian and Swiss tax rules might use `["DE", "AT", "CH"]`; a US one, `["US"]`. Use `GB` for the United Kingdom. Someone counts as in a target market when their company is based there or they work there. Write only what the user said, and leave it empty when they sell everywhere. Pudding moves these people up the list by as much as one account grade would. Country never changes a verdict, a fit or a grade at any step: Pudding applies markets to the order itself, and removes nobody. |
+| `next_markets` | Optional. Markets the user says they are starting to sell to. They move up by half as much. |
 
 ### Write queries the way a buyer talks
 
@@ -118,7 +120,7 @@ python3 pudding.py --project ~/pudding-runs/acme/2026-11-17 start https://exampl
 
 `--previous` makes this a follow-up. Pudding then:
 
-- copies last time's `plan.json`, so you revise a plan instead of writing one;
+- copies last time's `plan.json`, with the user's target customers and markets, so you revise a plan instead of writing one and ask nothing again;
 - writes `feedback.md`: what the reviewer said yes and no to, and what each search found last time;
 - reads only posts since the last run, with two days' overlap;
 - leaves out every post and employer already read, and everyone already shown;
@@ -357,7 +359,7 @@ Grade both into `accounts.json`. On a follow-up run the file already holds last 
 
 Companies and people are keyed by the IDs the sheet shows: the name in a company's LinkedIn page address, and a person's post or job ad ID. An entry point carries its colleague's ID and a number, such as `P0012.1`.
 
-**Grade each company against `ideal_account`, not against size.** A is an account that would matter to this business: the deal, the logo or the reach the seller wants. B is an ordinary fit. C is a weak one: a one-person shop, a segment the seller cares little about, a company in trouble. A company that could never buy was already graded `low` or `no`. For a seller of enterprise software, a public company or a well-funded scale-up is an A. For a seller to small owner-led firms, that scale-up is a C and the 12-person firm is an A. Look past LinkedIn's record where it misleads: a brand inside a larger group, a stealth team with a known founder, a company type that is plainly wrong.
+**Grade each company against `ideal_account`, not against size.** A is an account that would matter to this business: the deal, the logo or the reach the seller wants. B is an ordinary fit. C is a weak one: a one-person shop, a segment the seller cares little about, a company in trouble. A company that could never buy was already graded `low` or `no`. For a seller of enterprise software, a public company or a well-funded scale-up is an A. For a seller to small owner-led firms, that scale-up is a C and the 12-person firm is an A. Look past LinkedIn's record where it misleads: a brand inside a larger group, a stealth team with a known founder, a company type that is plainly wrong. Never grade a company or a person on their country: Pudding applies `markets` itself.
 
 **Grade each person's reach.** Count LinkedIn and X followers together. A is 10,000 or more followers drawn from the seller's buyers, a senior track record at companies people know, or advising or investing across many relevant teams. B is a few thousand relevant followers, or one notable senior role. C is everyone else. An audience in another field counts for little. An internship, a short stint, or a claim in the headline that the past roles don't show counts for nothing.
 
@@ -368,7 +370,7 @@ Companies and people are keyed by the IDs the sheet shows: the name in a company
 
 Grade every company, and every person the sheet shows in full: they have an audience, a new role, a connector's title or no company page. The people it lists under "Nothing to weigh" count as C reach unless you know better. An ungraded company counts as B, and someone with no employer at all as a C account. Run `check` after writing it.
 
-**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted in the week before the run, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is worth contacting too. Colleagues sit together under their company's best row, and an entry point counts as worth a look. Low fit keeps its own section, ordered the same way.
+**How the order is worked out.** Each person scores the sum of: evidence (strong 3, worth a look 2), 1 if buying now, the account (A 2, B 1, C 0), the market (1 in a target market, 0.5 in a next market or when Pudding can't tell, nothing otherwise, and nothing for anyone when `markets` is empty), reach (A 1, B 0.5, in full for `connector` and `both` and half for a `buyer`), seniority (up to 1 for executives and heads), timing (0.75 if posted in the week before the run, 0.4 within two weeks, 0.5 more if new in the role) and 0.5 when a colleague is worth contacting too. Colleagues sit together under their company's best row, and an entry point counts as worth a look. Low fit keeps its own section, ordered the same way.
 
 ## 6. Shortlist and review
 
@@ -379,7 +381,7 @@ python3 pudding.py --project DIR shortlist
 python3 pudding.py --project DIR review
 ```
 
-`shortlist.md` leads with the people worth contacting, best accounts and people deciding now first, and its heading says how many sit at A, B and C accounts. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person in the same order, with `fit`, `account`, `account_why`, `reach` and `priority` columns and their employer's size and industry.
+`shortlist.md` leads with the people worth contacting, best accounts and people deciding now first, and its heading says how many sit at A, B and C accounts. Low-fit people, existing customers, people who left, people who built their own, and anyone held each get their own section. `shortlist.csv` has every verified person in the same order, with `fit`, `account`, `account_why`, `reach`, `priority` and `market` columns and their employer's size, industry and country.
 
 `review` serves a page on this computer where the user says yes, no or maybe to each person. Each answer saves to `review.json` and into `shortlist.csv` as they click. It runs until stopped, so start it in the background, tell the user the address it prints, and leave it running.
 

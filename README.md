@@ -51,7 +51,7 @@ Replace the part in angle brackets and paste this into your agent:
 Clone https://github.com/enhance-labs-builds/self-sourcing-pudding (skip this if I already have it) and check I have Python 3.11 or later. Help me set up Treg. Then follow `docs/playbook.md` to find leads for `<my company URL>`. Keep each run in its own dated folder under `~/pudding-runs` and stay under US$1. When it's done, give me the CSV and the review page, and tell me the funnel and the spend.
 ```
 
-If your site leaves the buyer unclear, name them in one more sentence: "Our buyer is the head of finance at a 50 to 500 person company who still approves purchases by email." To choose who comes first, say which accounts matter most: "Put hospital groups and companies over 1,000 people first."
+Before it searches, your agent asks who your target customers are and what your target markets are. People in those markets move up the list; nobody is removed. One sentence each is enough: "The head of finance at a 50 to 500 person company who still approves purchases by email" and "Germany, Austria and Switzerland", or "anywhere". To choose who comes first, say which accounts matter most: "Put hospital groups and companies over 1,000 people first."
 
 Keep your agent set to ask before each command. You will approve four things in order: the download, a Python check, the Treg install and sign-in, and commands starting `python3 pudding.py`. Stop and ask why if it requests anything else.
 
@@ -145,7 +145,7 @@ Sonnet found more people on our brief and was the more precise, so it is the one
 3. **Verify.** Pudding confirms who each person is and where they work now. When a post credits a colleague for the work, Pudding adds them beside the person who posted.
 4. **Profile the employer.** Pudding records each employer's size, industry and one-line description. Your agent drops direct competitors and labels agencies and large companies.
 5. **Read job ads** from LinkedIn, Greenhouse, Ashby, Lever, Workday, SmartRecruiters and Workable. When an ad hands this work to a new hire, Pudding finds whoever owns it today, for the four best ads, and marks the row as a hiring signal.
-6. **Rank.** Your agent grades each employer against the accounts that matter most to you, and weighs each person's audience and track record. The best accounts and the people deciding now come first, with colleagues kept together. Ranking removes nobody.
+6. **Rank.** Your agent grades each employer against the accounts that matter most to you, and weighs each person's audience and track record. The best accounts, people in your target markets and the people deciding now come first, with colleagues kept together. Ranking removes nobody.
 7. **Review.** If you want to cut the list first, you answer yes, no or maybe. Low-fit people, existing customers and anyone Pudding couldn't identify sit in separate sections.
 8. **Enrich.** Pudding finds work email for your yes answers, or for everyone worth contacting.
 
@@ -155,7 +155,7 @@ Pudding reads posts from the last 30 days and job ads from the last 90. On our r
 
 ### Output
 
-Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; their account grade and why, and their reach; and your answer. Rows come best first. The email step adds work email. Filter on `fit` and `your_answer`, and match against your CRM on `profile_url`. For an outreach tool, map `profile_url`, `first_name`, `last_name`, `company` and `work_email`, and bring `quote` and `source_url` as custom fields.
+Each run writes `shortlist.md` and `shortlist.csv` to its folder. Each CSV row holds the person's name, role, company, company size, industry, country, web domain, location, LinkedIn link and X handle; the quote, its source and date; the search that found them; the run date; their account grade and why, their reach, and whether they are in your target markets; and your answer. Rows come best first. The email step adds work email. Filter on `fit`, `market` and `your_answer`, and match against your CRM on `profile_url`. For an outreach tool, map `profile_url`, `first_name`, `last_name`, `company` and `work_email`, and bring `quote` and `source_url` as custom fields.
 
 ### Suppression lists
 

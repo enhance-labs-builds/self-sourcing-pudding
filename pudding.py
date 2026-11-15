@@ -97,7 +97,7 @@ CSV_FIELDS = ("fit", "kind", "name", "first_name", "last_name", "role", "company
               "company_size", "company_industry", "company_about", "location", "country", "profile_url", "x_handle", "role_basis",
               "identity_basis", "channel", "source_url", "published_on", "found_by", "run_date", "id",
               "quote", "why", "labels", "other_sources", "your_answer", "your_note", "work_email", "work_email_status",
-              "account", "account_why", "reach", "priority")  # New columns go last, so a saved import keeps its positions.
+              "account", "account_why", "reach", "priority", "company_country", "market")  # New columns go last, so a saved import keeps its positions.
 
 
 def read(path, default=None):
@@ -418,7 +418,8 @@ def start(project, url, budget_usd, window_days, previous=None, suppress=None):
     save(project / "site.md", terminal_text("\n\n".join([note, *(f"## {page}\n\n{page_text(body)}" for page, body in pages)])) + "\n")
     if not (project / "plan.json").exists():
         t.atomic_json(project / "plan.json", {
-            "product": "", "buyer": "", "qualifies": "", "ideal_account": "", "exclude_employers": [], "customers": [],
+            "product": "", "buyer": "", "qualifies": "", "ideal_account": "", "markets": [], "next_markets": [],
+            "exclude_employers": [], "customers": [],
             "employer_topic": "", "linkedin_queries": [], "x_queries": [], "job_queries": [], "owner_titles": [],
             "seller_terms": []})
     if len(page_text(html)) < 400:
@@ -460,11 +461,19 @@ def load_plan(project):
         raise ValueError("plan.json employer_topic needs a word or short phrase.")
     if not isinstance(plan.setdefault("ideal_account", ""), str) or "\n" in plan["ideal_account"]:
         raise ValueError("plan.json ideal_account needs one sentence on which accounts matter most.")
+    for key in ("markets", "next_markets"):
+        values = plan.setdefault(key, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or not re.fullmatch(r"[A-Z]{2}", v) for v in values):
+            raise ValueError(f"plan.json {key} needs two-letter country codes in capitals, such as DE or JP.")
+        if "UK" in values:
+            raise ValueError(f"plan.json {key}: the code for the United Kingdom is GB.")
+    if set(plan["markets"]) & set(plan["next_markets"]) or plan["next_markets"] and not plan["markets"]:
+        raise ValueError("plan.json next_markets needs markets, and no country can be in both.")
     return plan
 
 
 PLAN_FIELDS = {"product", "buyer", "qualifies", "exclude_employers", "customers", "owner_titles", "employer_topic",
-               "seller_terms", "ideal_account", *LIMITS}
+               "seller_terms", "ideal_account", "markets", "next_markets", *LIMITS}
 
 
 def plan_notes(plan, searched=False):
@@ -929,11 +938,16 @@ def employer_record(data, company_url):
     industries = [row.get("name") for row in company.get("industries") or [] if isinstance(row, dict) and row.get("name")]
     count, followers = company.get("employeeCount"), company.get("followerCount")
     founded = (company.get("foundedOn") or {}).get("year") if isinstance(company.get("foundedOn"), dict) else None
+    # The headquarters decides which market an account belongs to. A single listed office counts as the headquarters.
+    offices = [place for place in company.get("locations") or [] if isinstance(place, dict)]
+    head = next((place for place in offices if place.get("headquarter") is True), offices[0] if len(offices) == 1 else {})
+    code = str((head.get("parsed") or {}).get("countryCode") or head.get("country") or "").upper()
     return {"name": company.get("name") or "", "url": site, "employees": count if isinstance(count, int) else None,
             "industry": industries[0] if industries else "",
             "about": " ".join(str(company.get("tagline") or company.get("description") or "").split())[:220],
             "type": str(company.get("companyType") or ""), "followers": followers if isinstance(followers, int) else None,
-            "founded": founded if isinstance(founded, int) else None}
+            "founded": founded if isinstance(founded, int) else None,
+            "country": code if re.fullmatch(r"[A-Z]{2}", code) else ""}
 
 
 def employer(call, person):
@@ -1686,6 +1700,9 @@ def enrich(project, call, limit, everyone=False):
 GRADES = ("A", "B", "C")
 REACH_ROLES = ("buyer", "connector", "both")
 ACCOUNT_POINTS = {"A": 2, "B": 1, "C": 0}
+# Target markets are worth one account grade; markets the seller is starting in, half. It orders the list and removes
+# nobody: strong evidence from elsewhere still ranks level with a weaker post in a target market.
+MARKET_POINTS = {"target": 1, "next": 0.5, "unknown": 0.5, "other": 0, "": 0}
 REACH_POINTS = {"A": 1, "B": 0.5, "C": 0}
 EVIDENCE_POINTS = {"strong": 3, "look": 2, "low": 1}
 SENIORITY_POINTS = (1.0, 0.6, 0.4, 0.25)  # Executives and heads, directors, managers and leads, everyone else.
@@ -1751,8 +1768,18 @@ def new_in_role(person, today, days=92):
     return bool(began) and 0 <= (today - began).days <= days
 
 
+def market(row, plan):
+    """target, next, other or unknown: whether the company is based, or the person works, in one of the target markets.
+    Empty when the plan names no markets."""
+    if not plan["markets"]:
+        return ""
+    places = {row.get("company_country"), row.get("country")} - {"", None}
+    return ("unknown" if not places else "target" if places & set(plan["markets"])
+            else "next" if places & set(plan["next_markets"]) else "other")
+
+
 def priority(row, companies, people, today, colleagues):
-    """How soon to contact someone: evidence, the account, their reach and seniority, timing, and colleagues on the list."""
+    """How soon to contact someone: evidence, the account, its market, their reach and seniority, timing, and colleagues."""
     person = people.get(row["key"], {})
     slug = account_key(row)
     graded = companies.get(slug, {}).get("grade") if slug else None
@@ -1765,6 +1792,7 @@ def priority(row, companies, people, today, colleagues):
     timing = 0.75 if age <= 7 else 0.4 if age <= 14 else 0
     timing += 0.5 if person.get("new_role") else 0
     points = (EVIDENCE_POINTS[row["fit"]] + (1 if row["buying_now"] else 0) + ACCOUNT_POINTS[grade] + reach
+              + MARKET_POINTS[row.get("market", "")]
               + SENIORITY_POINTS[seniority(row["role"])] + timing + (0.5 if colleagues else 0))
     why = person.get("why", "") if person.get("account") else companies.get(slug, {}).get("why", "") if graded else ""
     return round(points, 2), grade, why or ""
@@ -1892,9 +1920,11 @@ def accounts(project, call, funding=False):
     def look(item):
         slug, url = item
         record = dict(facts.get(slug) or {})
-        if "type" not in record:  # Job ads carry a thinner record, and older runs kept less.
+        # Job ads carry a thinner record, and older runs kept less. A missing country is bought only when it changes the order.
+        if "type" not in record or plan["markets"] and "country" not in record:
             record = call(t.COMPANY, {"url": url}, lambda data: employer_record(data, url)) or record
-            record.setdefault("type", "")  # A saved answer from an older version has no type: asked once, not every run.
+            record.setdefault("type", "")  # A saved answer from an older version lacks these: asked once, not every run.
+            record.setdefault("country", "")
         if funding and "funding" not in record:
             found = call(t.FUNDING, {"linkedinURL": url, "perPage": t.FUNDING_PAGE, "page": 1}, t.funding_rounds)
             record = {**record, "funding": found} if found is not None else record
@@ -1919,7 +1949,8 @@ def accounts(project, call, funding=False):
         lines.append(f"### {slug} · {record.get('name') or on_list[slug][0]['company']}"
                      + (f" · graded {companies[slug]['grade']}: {companies[slug]['why']}" if slug in companies else ""))
         lines.append("- " + (" · ".join(filter(None, [
-            record.get("type"), headcount(record.get("employees"), " on LinkedIn"),
+            record.get("type"),
+            headcount(record.get("employees"), " on LinkedIn"),
             f"{record['followers']:,} LinkedIn followers" if record.get("followers") else "", record.get("industry"),
             f"founded {record['founded']}" if record.get("founded") else ""])) or "No company record."))
         if record.get("about"):
@@ -2073,7 +2104,11 @@ def shortlist_rows(project):
             "work_email": entry.get("work_email", {}).get("address", ""),
             "work_email_status": entry.get("work_email", {}).get("status", ""), "key": key, "id": key,
             "x_handle": source["author"].lstrip("@") if entry["channel"] == "x" and origin == key else "", "run_date": created,
-            "found_by": "; ".join(source.get("found_by", []))}
+            "found_by": "; ".join(source.get("found_by", [])), "company_country": (entry.get("employer") or {}).get("country") or ""}
+    facts = read(project / "companies.json", {})
+    for row in rows.values():
+        row["company_country"] = row["company_country"] or (facts.get(account_key(row)) or {}).get("country") or ""
+        row["market"] = market(row, plan)
     rows = prioritise(project, list(rows.values()), created)
     by_company = {}
     for row in rows:
@@ -2137,6 +2172,8 @@ def shortlist(project):
     split = Counter(row["account"] for row in contact if row["kind"] != "entry point")
     by_account = (": " + ", ".join(f"{split[grade]} at {grade} accounts" for grade in GRADES if split[grade])
                   if graded_accounts(project)[0] else "")
+    in_market = sum(row["market"] == "target" for row in contact if row["kind"] != "entry point")
+    by_account += f"{';' if by_account else ':'} {in_market} in your target markets" if any(row["market"] for row in contact) else ""
     lines = ["# Shortlist", "", " · ".join(f"{label}: {value}" for label, value in funnel(project).items()), "",
              f"## Worth contacting ({spoke}{by_account}" + (f", and {named} colleague{'s' * (named != 1)} they named)" if named else ")"),
              "", *table(contact)]

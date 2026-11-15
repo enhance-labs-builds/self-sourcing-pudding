@@ -304,7 +304,7 @@ When the user hands you a post full of the right people, `post` reads it: the po
 
 - **The post and its commenters** go on the reading sheet first. A commenter wrote something of their own, so grade the comment like a post.
 - **Reactors** said nothing. Pudding skips sellers, recruiters, job seekers and people already seen, reads the rest's recent posts best placed first, and puts any post on the topic on the sheet (found by `liked P…`). Grade those like any post: a reactor with their own evidence is a prospect like anyone else.
-- **Reactors with nothing of their own** go to `engaged.md` and `engaged.csv`, never to the shortlist. They have shown interest, not evidence. Say so if the user wants to use them, and treat them as a separate, weaker list.
+- **Reactors with nothing of their own** go to `reactors.md` and `reactors.csv`, never to the shortlist. They have shown interest, not evidence. Say so if the user wants to use them, and treat them as a separate, weaker list.
 
 `--comment-pages`, `--reaction-pages` and `--likers` change the limits. Running `post` again on the same link adds nothing twice and checks the next reactors in line. On X it reads replies only; X likes are not available.
 

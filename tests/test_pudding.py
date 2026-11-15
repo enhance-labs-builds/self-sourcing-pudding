@@ -820,16 +820,16 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual(checked, ["https://www.linkedin.com/in/fay", "https://www.linkedin.com/in/dan"])
         self.assertEqual([post["text"][:20] for post in posts.values() if post["found_by"] == ["liked P0001"]],
                          ["We switched off Tool"])
-        engaged = (self.project / "engaged.md").read_text()
+        reactors = (self.project / "reactors.md").read_text()
         for name in ("Dan Day", "Eve Eden", "Gus Gray", "Jo Jones"):
-            self.assertIn(name, engaged)
+            self.assertIn(name, reactors)
         for name in ("Fay Fox", "Moe", "Cara Cole", "Ida Ivy", "Acme"):
-            self.assertNotIn(f"| {name} |", engaged)
-        engaged_csv = (self.project / "engaged.csv").read_text()
-        self.assertIn("'=HYPERLINK", engaged_csv)                   # a formula stays text in a spreadsheet
-        self.assertIn("https://www.linkedin.com/in/ACoAAB12x", engaged_csv)   # a member-ID link keeps its case, or it breaks
-        self.assertNotIn("Ken Kay", engaged)                        # matched by name: already contacted
-        self.assertEqual(engaged.count("Cara Cole"), 0)             # a commenter is not listed again as a reactor
+            self.assertNotIn(f"| {name} |", reactors)
+        reactors_csv = (self.project / "reactors.csv").read_text()
+        self.assertIn("'=HYPERLINK", reactors_csv)                   # a formula stays text in a spreadsheet
+        self.assertIn("https://www.linkedin.com/in/ACoAAB12x", reactors_csv)   # a member-ID link keeps its case, or it breaks
+        self.assertNotIn("Ken Kay", reactors)                        # matched by name: already contacted
+        self.assertEqual(reactors.count("Cara Cole"), 0)             # a commenter is not listed again as a reactor
         self.assertIn("1 wrote about the topic themselves", out.getvalue())
         # Again: nothing doubles, and the next reactor in line is checked, by the link as LinkedIn gave it.
         sent.clear()
@@ -839,8 +839,8 @@ class AgentRunTest(unittest.TestCase):
         self.assertEqual([params["profile"] for endpoint, params in sent if endpoint == t.LINKEDIN_USER_POSTS],
                          ["https://www.linkedin.com/in/ACoAAB12x"])
         shared = json.loads((self.project / "shared.json").read_text())
-        self.assertFalse(shared["engaged"]["https://www.linkedin.com/in/eve"]["checked"])   # a recruiter is never looked up
-        self.assertFalse(shared["engaged"]["https://www.linkedin.com/in/gus"]["checked"])   # nor a seller
+        self.assertFalse(shared["reactors"]["https://www.linkedin.com/in/eve"]["checked"])   # a recruiter is never looked up
+        self.assertFalse(shared["reactors"]["https://www.linkedin.com/in/gus"]["checked"])   # nor a seller
 
     def test_spider_retries_what_the_cap_refused(self):
         posts = {}

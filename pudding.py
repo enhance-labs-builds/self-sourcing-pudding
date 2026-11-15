@@ -889,10 +889,10 @@ def on_topic(text, plan):
 def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=30, per_liker=2, liker_days=30):
     """Read a post someone shared: the post, the comments under it, who reacted, and the reactors' own recent posts.
     Commenters and reactors with a post of their own on the topic go on the reading sheet to be graded like anyone
-    else. Reactors with nothing of their own are listed in engaged.md, apart: they have shown interest, not evidence."""
+    else. Reactors with nothing of their own are listed in reactors.md, apart: they have shown interest, not evidence."""
     channel, link = shared_post_url(link)
     plan, posts = load_plan(project), load_posts(project)
-    shared = read(project / "shared.json", {"posts": {}, "engaged": {}})
+    shared = read(project / "shared.json", {"posts": {}, "reactors": {}})
     previous = read(project / "previous.json", {})
     skip = set(previous) | set(read(project / "suppress.json", {}).get("profiles", []))
     # Reactions come back with opaque member IDs, never the profile link we hold, so people already known are
@@ -925,7 +925,7 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
     commenters = {author_key(post) for post in posts.values() if post.get("parent") == seed and seed}
     talkers = {plain_name(post["author"]) for post in posts.values()
                if seed and (post.get("parent") == seed or post["id"] == seed)} - {""}
-    engaged = shared["engaged"]
+    reactors = shared["reactors"]
     reactions = 0
     if channel == "linkedin":
         for page in range(1, reaction_pages + 1):
@@ -939,7 +939,7 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
                 if (row["profile"] in (author, *commenters) or row["profile"] in skip
                         or plain_name(row["name"]) in talkers | known_names):
                     continue
-                entry = engaged.setdefault(row["profile"], {**row, "posts": [], "checked": False, "own": []})
+                entry = reactors.setdefault(row["profile"], {**row, "posts": [], "checked": False, "own": []})
                 if link not in entry["posts"]:
                     entry["posts"].append(link)
             if page >= pages:
@@ -949,7 +949,7 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
     created = date.fromisoformat(read(project / "project.json")["created"])
     oldest = (created - timedelta(days=liker_days)).isoformat()
     seen_post = {t.social_source_key(posts[seed])} if seed else set()
-    queue = sorted((entry for entry in engaged.values() if not entry["checked"] and buyer_signal(entry["headline"], plan)),
+    queue = sorted((entry for entry in reactors.values() if not entry["checked"] and buyer_signal(entry["headline"], plan)),
                    key=lambda entry: -buyer_signal(entry["headline"], plan))[:likers]
     for entry, rows in zip(queue, together(call, lambda entry: call(
             t.LINKEDIN_USER_POSTS, {"profile": entry["lookup"], "postedLimit": "month"}, t.linkedin_posts), queue)):
@@ -972,8 +972,8 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
     shared["posts"][link] = {"seed": seed, "channel": channel, "read": date.today().isoformat()}
     t.atomic_json(project / "posts.json", posts)
     t.atomic_json(project / "shared.json", shared)
-    engaged_sheet(project, plan, shared)
-    checked = [entry for entry in engaged.values() if entry["checked"]]
+    reactors_sheet(project, plan, shared)
+    checked = [entry for entry in reactors.values() if entry["checked"]]
     print(terminal_text(
         f"{link}: the post {'read as ' + seed if seed else 'could not be read'}, {comments} new comments, "
         f"{reactions} reactions. Checked the posts of {len(checked)} reactors: {sum(bool(e['own']) for e in checked)} "
@@ -982,15 +982,15 @@ def read_post(project, call, link, *, comment_pages=3, reaction_pages=3, likers=
         print("X likes are not read: only replies.")
     if refused(call) > before:
         print("The cap stopped some lookups. Run post again after raising it to finish this one.")
-    print("Run sheet to grade the commenters and the reactors' own posts. engaged.md lists the rest.")
+    print("Run sheet to grade the commenters and the reactors' own posts. reactors.md lists the rest.")
 
 
-def engaged_sheet(project, plan, shared):
+def reactors_sheet(project, plan, shared):
     """People who reacted but have written nothing on the topic: interest, not evidence. Never on the shortlist."""
     cell = lambda text: re.sub(r"[|\[\]]", r"\\\g<0>", terminal_text(str(text))).replace("<", "&lt;")
-    rows = [entry for entry in shared["engaged"].values() if not entry["own"]]
+    rows = [entry for entry in shared["reactors"].values() if not entry["own"]]
     rows.sort(key=lambda entry: (-buyer_signal(entry["headline"], plan), entry["name"]))
-    lines = ["# Engaged, no evidence", "",
+    lines = ["# Reactors with nothing of their own", "",
              "They reacted to a post someone shared, and have written nothing of their own on the topic in the last month "
              "(or were not checked). They are not prospects and never go on the shortlist. Treat them as a separate, "
              "weaker list. LinkedIn gives reactors as member IDs, so most links here are member-ID links: they open the "
@@ -999,7 +999,7 @@ def engaged_sheet(project, plan, shared):
     lines += [f"| {cell(entry['name'])} | {cell(entry['headline'])} | {cell(entry['reaction'])} | "
               f"{'yes' if buyer_signal(entry['headline'], plan) >= 3 else 'maybe' if buyer_signal(entry['headline'], plan) else 'no'} | "
               f"{'yes' if entry['checked'] else 'no'} |" for entry in rows]
-    save(project / "engaged.md", terminal_text("\n".join(lines)) + "\n")
+    save(project / "reactors.md", terminal_text("\n".join(lines)) + "\n")
     table = io.StringIO()
     out = csv.writer(table)
     out.writerow(["name", "headline", "profile_url", "reaction", "buyer_signal", "own_posts_checked", "shared_posts"])
@@ -1008,7 +1008,7 @@ def engaged_sheet(project, plan, shared):
         # the profile but has to be resolved before most outreach tools will take it.
         out.writerow([csv_value(entry["name"]), csv_value(entry["headline"]), entry.get("profile_url") or entry["lookup"], entry["reaction"],
                       buyer_signal(entry["headline"], plan), entry["checked"], " ".join(entry["posts"])])
-    save(project / "engaged.csv", table.getvalue())
+    save(project / "reactors.csv", table.getvalue())
 
 
 # Identity and roles

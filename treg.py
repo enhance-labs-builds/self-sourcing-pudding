@@ -19,6 +19,9 @@ from uuid import uuid4
 LINKEDIN = "harvestapi.linkedin.post.search"
 X = "anyapi.x.search.posts"
 LINKEDIN_COMMENTS = "harvestapi.linkedin.post.comments"
+LINKEDIN_POST = "harvestapi.linkedin.post.get"
+LINKEDIN_REACTIONS = "harvestapi.linkedin.post.reactions"
+LINKEDIN_USER_POSTS = "harvestapi.linkedin.user.posts"
 X_REPLIES = "anyapi.x.post.comments"
 X_QUOTES = "x.x.get-posts-quoted-posts"
 X_PROFILE = "anyapi.x.user.profile"
@@ -36,11 +39,13 @@ FUNDING_PAGE = 10  # Rounds asked for per company. A company with this many may 
 EMAIL_ENDPOINTS = (COMPANY, WORK_EMAIL, VERIFY_EMAIL)
 METHODS = {LINKEDIN: "GET", X: "POST", PROFILE: "GET", COMPANY: "GET", WORK_EMAIL: "POST", VERIFY_EMAIL: "GET",
            LINKEDIN_COMMENTS: "GET", X_REPLIES: "POST", X_QUOTES: "GET", X_PROFILE: "POST", SEMANTIC_PEOPLE: "POST",
-           BUYER_WEB: "POST", JOB_SEARCH: "GET", JOB: "GET", PEOPLE: "GET", FUNDING: "GET"}
+           BUYER_WEB: "POST", JOB_SEARCH: "GET", JOB: "GET", PEOPLE: "GET", FUNDING: "GET", LINKEDIN_POST: "GET",
+           LINKEDIN_REACTIONS: "GET", LINKEDIN_USER_POSTS: "GET"}
 # The most a single call may cost, in millionths of a US dollar.
 PER_CALL = {LINKEDIN: 20_000, X: 3_000, PROFILE: 15_000, COMPANY: 5_000, WORK_EMAIL: 11_000, VERIFY_EMAIL: 13_000,
             LINKEDIN_COMMENTS: 5_000, X_REPLIES: 14_000, X_QUOTES: 50_000, X_PROFILE: 2_000, SEMANTIC_PEOPLE: 7_000,
-            BUYER_WEB: 1_000, JOB_SEARCH: 2_000, JOB: 2_000, PEOPLE: 5_000, FUNDING: 10_000}
+            BUYER_WEB: 1_000, JOB_SEARCH: 2_000, JOB: 2_000, PEOPLE: 5_000, FUNDING: 10_000, LINKEDIN_POST: 5_000,
+            LINKEDIN_REACTIONS: 5_000, LINKEDIN_USER_POSTS: 5_000}
 X_QUOTE_PAGE = 10
 
 
@@ -423,6 +428,33 @@ def linkedin_posts(data):
             "profile": linkedin_profile(author.get("linkedinUrl")), "headline": author.get("info") or "",
         })
     return output
+
+
+def linkedin_post(data):
+    """One post read by its link: the same fields as a post found by search."""
+    return linkedin_posts({"elements": [data["element"]]}) if isinstance(data.get("element"), dict) else []
+
+
+def linkedin_reactions(data):
+    """Who reacted to a post: a name, a headline and a profile, but nothing they wrote."""
+    output = []
+    for row in data["elements"]:
+        actor = row.get("actor") or {}
+        raw = actor.get("linkedinUrl")
+        profile = linkedin_profile(raw)
+        if not profile:  # A company page reacting, or a link that is not a person's profile.
+            continue
+        output.append({"name": actor.get("name") or "Unknown LinkedIn member", "headline": actor.get("position") or "",
+                       "profile": profile, "reaction": row.get("reactionType") or "",
+                       # The provider's own link, case and all: an opaque member ID breaks if it is lower-cased.
+                       "lookup": "https://www.linkedin.com" + linkedin_page(raw).path.rstrip("/")})
+    return output
+
+
+def pages_of(data):
+    """How many pages a paged LinkedIn answer says it has."""
+    pagination = data.get("pagination") if isinstance(data, dict) else None
+    return pagination.get("totalPages") or 1 if isinstance(pagination, dict) else 1
 
 
 def linkedin_comments(data):
